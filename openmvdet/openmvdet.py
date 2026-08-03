@@ -12,7 +12,7 @@ from .detr3_models.helpers import GenericMLP
 from .detr3_models.position_embedding import PositionEmbeddingCoordsSine
 from .detr3_models.utils.votenet_pc_util import write_ply_rgb
 from .device import autocast, get_device
-from .geometry_attention import GeometryAwareDeformableDecoder
+from .geometry_attention import GeometryAwareDecoder
 
 from .vggt_omega.models import VGGTOmega
 from .vggt_omega.utils.pose_enc import encoding_to_camera
@@ -108,7 +108,6 @@ class VGGTDet(Base3DDetector):
             vggt_omega_checkpoint='/mnt/workspace/pretrain/VGGT-Omega/vggt_omega_1b_512.pt',
             query_fps_stride=16,
             query_fps_max_points=100000,
-            deformable_num_points=4,
             visualize_query_points=False,
             query_visualization_path='vis_dir/query_points',
             query_visualization_marker_size=0.05
@@ -129,13 +128,11 @@ class VGGTDet(Base3DDetector):
 
         self.vggt_encoder.eval()
 
-        self.geometry_decoder = GeometryAwareDeformableDecoder(
+        self.geometry_decoder = GeometryAwareDecoder(
             embed_dims=token_dim,
             num_layers=decoder_cfg['dec_nlayers'],
             num_heads=decoder_cfg['dec_nhead'],
             feedforward_channels=decoder_cfg['dec_ffn_dim'],
-            num_feature_levels=4 if use_multi_layers else 1,
-            num_points=deformable_num_points,
             dropout=decoder_cfg['dec_dropout'])
 
         if if_simpler_project:

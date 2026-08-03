@@ -13,7 +13,7 @@ resume = True
 # path config
 vggt_omega_checkpoint = '/lv_workdir/data/pretrain/vggt_omega_1b_512.pt'
 data_root = '/lv_workdir/data/ScanNet_processed/'
-
+batch_size = 1
 
 
 env_cfg = dict(dist_cfg=dict(backend=_dist_backend_))
@@ -86,7 +86,6 @@ model = dict(
     if_simpler_project=True,
     if_use_pred_pc_query=True,
     if_task_query=False,
-    deformable_num_points=4,
     vggt_omega_checkpoint=vggt_omega_checkpoint,
     query_fps_stride=16,
     query_fps_max_points=100000,
@@ -209,7 +208,7 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=1,
+    batch_size=batch_size,
     num_workers=8,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
