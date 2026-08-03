@@ -1,0 +1,743 @@
+_decoder_layer_num = 8
+_dist_backend_ = 'nccl'
+_max_epoch = 400
+_token_dim_ = 512
+_warm_epoch = 0
+backend_args = None
+batch_size = 1
+class_names = [
+    'cabinet',
+    'bed',
+    'chair',
+    'sofa',
+    'table',
+    'door',
+    'window',
+    'bookshelf',
+    'picture',
+    'counter',
+    'desk',
+    'curtain',
+    'refrigerator',
+    'showercurtrain',
+    'toilet',
+    'sink',
+    'bathtub',
+    'garbagebin',
+]
+custom_imports = dict(
+    allow_failed_imports=False, imports=[
+        'projects.Dudet.vggtdet',
+    ])
+data_root = '/lv_workdir/data/ScanNet_processed/'
+dataset_type = 'MultiViewScanNetDataset'
+default_hooks = dict(
+    checkpoint=dict(
+        interval=2,
+        max_keep_ckpts=1000,
+        rule='greater',
+        save_best=[
+            'mAP_0.25',
+        ],
+        type='CheckpointHook'),
+    logger=dict(interval=10, type='LoggerHook'),
+    param_scheduler=dict(type='ParamSchedulerHook'),
+    sampler_seed=dict(type='DistSamplerSeedHook'),
+    timer=dict(type='IterTimerHook'),
+    visualization=dict(type='Det3DVisualizationHook'))
+default_scope = 'mmdet3d'
+env_cfg = dict(
+    cudnn_benchmark=False,
+    dist_cfg=dict(backend='nccl'),
+    mp_cfg=dict(mp_start_method='fork', opencv_num_threads=0))
+file_client_args = dict(backend='disk')
+find_unused_parameters = True
+input_modality = dict(
+    use_camera=True,
+    use_depth=False,
+    use_lidar=False,
+    use_neuralrecon_depth=False,
+    use_ray=True)
+launcher = 'pytorch'
+load_from = None
+log_level = 'INFO'
+log_processor = dict(by_epoch=True, type='LogProcessor', window_size=50)
+metainfo = dict(CLASSES=[
+    'cabinet',
+    'bed',
+    'chair',
+    'sofa',
+    'table',
+    'door',
+    'window',
+    'bookshelf',
+    'picture',
+    'counter',
+    'desk',
+    'curtain',
+    'refrigerator',
+    'showercurtrain',
+    'toilet',
+    'sink',
+    'bathtub',
+    'garbagebin',
+])
+model = dict(
+    bbox_head=dict(
+        if_project_frist_frame_back=True,
+        if_v2_head=True,
+        learn_center_diff=True,
+        loss_weights=dict(
+            center_loss=5.0,
+            cls_loss=1.0,
+            iou_loss=1.0,
+            not_objness_loss=0.25,
+            objness_loss=1.0,
+            size_loss=1.0),
+        matcher='one2more',
+        matcher_cost_weights=dict(center=0.0, cls=1.0, giou=2.0, obj_ness=0.0),
+        matcher_iou_thres=0.1,
+        matcher_max_dynamic_samples=5,
+        mlp_dropout=0.3,
+        n_channels=512,
+        n_classes=18,
+        n_levels=8,
+        n_reg_outs=6,
+        prior_generator=dict(
+            ranges=[
+                [
+                    -3.2,
+                    -3.2,
+                    -1.28,
+                    3.2,
+                    3.2,
+                    1.28,
+                ],
+            ],
+            rotations=[
+                0.0,
+            ],
+            type='AlignedAnchor3DRangeGenerator'),
+        pts_assign_threshold=27,
+        pts_center_threshold=18,
+        type='VGGTDetHead',
+        visualize_path='vis_dir/'),
+    data_preprocessor=dict(
+        bgr_to_rgb=True,
+        mean=None,
+        pad_size_divisor=14,
+        pad_value=0.0,
+        std=None,
+        type='VGGTDetDataPreprocessor'),
+    decoder_cfg=dict(
+        dec_dim=512,
+        dec_dropout=0.1,
+        dec_ffn_dim=512,
+        dec_nhead=4,
+        dec_nlayers=8,
+        view_topk=12),
+    deformable_num_points=4,
+    if_learnable_query=False,
+    if_mix_precision=True,
+    if_simpler_project=True,
+    if_task_query=False,
+    if_use_gt_query=False,
+    if_use_pred_pc_query=True,
+    num_queries=256,
+    query_fps_max_points=100000,
+    query_fps_stride=16,
+    query_visualization_marker_size=0.05,
+    query_visualization_path='vis_dir/query_points',
+    test_cfg=dict(iou_thr=0.25, nms_pre=1000, score_thr=0.01),
+    test_only_last_layer=True,
+    token_dim=512,
+    train_cfg=dict(),
+    type='VGGTDet',
+    use_multi_layers=True,
+    vggt_omega_checkpoint='/lv_workdir/data/pretrain/vggt_omega_1b_512.pt',
+    visualize_query_points=False)
+n_points = 100000
+optim_wrapper = dict(
+    clip_grad=dict(max_norm=35.0, norm_type=2),
+    optimizer=dict(lr=0.00025, type='AdamW', weight_decay=0.0001),
+    type='OptimWrapper')
+param_scheduler = [
+    dict(
+        T_max=399,
+        begin=0,
+        by_epoch=True,
+        end=400,
+        eta_min=1e-06,
+        type='CosineAnnealingLR'),
+]
+prior_generator = dict(
+    ranges=[
+        [
+            -3.2,
+            -3.2,
+            -1.28,
+            3.2,
+            3.2,
+            1.28,
+        ],
+    ],
+    rotations=[
+        0.0,
+    ],
+    type='AlignedAnchor3DRangeGenerator')
+resume = True
+test_cfg = dict()
+test_collect_keys = [
+    'img',
+    'lightpos',
+    'nerf_sizes',
+    'raydirs',
+    'gt_images',
+    'c2w',
+    'intrinsic',
+    'points',
+    'gt_bboxes_3d',
+    'gt_labels_3d',
+    'pose_matrix',
+    'axis_align_matrix',
+    'avg_distance',
+]
+test_dataloader = dict(
+    batch_size=1,
+    dataset=dict(
+        ann_file='scannet_infos_val_pts.pkl',
+        box_type_3d='Depth',
+        data_root='/lv_workdir/data/ScanNet_processed/',
+        filter_empty_gt=True,
+        metainfo=dict(CLASSES=[
+            'cabinet',
+            'bed',
+            'chair',
+            'sofa',
+            'table',
+            'door',
+            'window',
+            'bookshelf',
+            'picture',
+            'counter',
+            'desk',
+            'curtain',
+            'refrigerator',
+            'showercurtrain',
+            'toilet',
+            'sink',
+            'bathtub',
+            'garbagebin',
+        ]),
+        modality=dict(
+            use_camera=True,
+            use_depth=False,
+            use_lidar=False,
+            use_neuralrecon_depth=False,
+            use_ray=True),
+        pipeline=[
+            dict(
+                backend_args=None,
+                coord_type='DEPTH',
+                data_root='/lv_workdir/data/ScanNet_processed/',
+                load_dim=6,
+                shift_height=False,
+                type='LoadPointsFromFile',
+                use_color=True,
+                use_dim=[
+                    0,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                ]),
+            dict(type='LoadAnnotations3D'),
+            dict(num_points=100000, type='PointSample'),
+            dict(
+                depth_range=[
+                    0.5,
+                    5.5,
+                ],
+                loading='random',
+                margin=10,
+                n_images=81,
+                nerf_target_views=1,
+                normalize=False,
+                tgt_transforms=[
+                    dict(
+                        file_client_args=dict(backend='disk'),
+                        type='LoadImageFromFile'),
+                    dict(
+                        interpolation='bicubic',
+                        keep_ratio=True,
+                        scale=(
+                            448,
+                            448,
+                        ),
+                        type='Resize'),
+                ],
+                transforms=[
+                    dict(
+                        file_client_args=dict(backend='disk'),
+                        type='LoadImageFromFile'),
+                    dict(
+                        interpolation='bicubic',
+                        keep_ratio=True,
+                        scale=(
+                            448,
+                            448,
+                        ),
+                        type='Resize'),
+                ],
+                type='MultiViewPipeline_Tgt'),
+            dict(coord_type='DEPTH', type='ProjectPCtoFirstFrameAndNorm'),
+            dict(
+                keys=[
+                    'img',
+                    'lightpos',
+                    'nerf_sizes',
+                    'raydirs',
+                    'gt_images',
+                    'c2w',
+                    'intrinsic',
+                    'points',
+                    'gt_bboxes_3d',
+                    'gt_labels_3d',
+                    'pose_matrix',
+                    'axis_align_matrix',
+                    'avg_distance',
+                ],
+                type='PackNeRFDetInputs'),
+        ],
+        test_mode=True,
+        type='MultiViewScanNetDataset'),
+    drop_last=False,
+    num_workers=8,
+    persistent_workers=True,
+    sampler=dict(shuffle=False, type='DefaultSampler'))
+test_evaluator = [
+    dict(type='IndoorMetric'),
+]
+test_pipeline = [
+    dict(
+        backend_args=None,
+        coord_type='DEPTH',
+        data_root='/lv_workdir/data/ScanNet_processed/',
+        load_dim=6,
+        shift_height=False,
+        type='LoadPointsFromFile',
+        use_color=True,
+        use_dim=[
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+        ]),
+    dict(type='LoadAnnotations3D'),
+    dict(num_points=100000, type='PointSample'),
+    dict(
+        depth_range=[
+            0.5,
+            5.5,
+        ],
+        loading='random',
+        margin=10,
+        n_images=81,
+        nerf_target_views=1,
+        normalize=False,
+        tgt_transforms=[
+            dict(
+                file_client_args=dict(backend='disk'),
+                type='LoadImageFromFile'),
+            dict(
+                interpolation='bicubic',
+                keep_ratio=True,
+                scale=(
+                    448,
+                    448,
+                ),
+                type='Resize'),
+        ],
+        transforms=[
+            dict(
+                file_client_args=dict(backend='disk'),
+                type='LoadImageFromFile'),
+            dict(
+                interpolation='bicubic',
+                keep_ratio=True,
+                scale=(
+                    448,
+                    448,
+                ),
+                type='Resize'),
+        ],
+        type='MultiViewPipeline_Tgt'),
+    dict(coord_type='DEPTH', type='ProjectPCtoFirstFrameAndNorm'),
+    dict(
+        keys=[
+            'img',
+            'lightpos',
+            'nerf_sizes',
+            'raydirs',
+            'gt_images',
+            'c2w',
+            'intrinsic',
+            'points',
+            'gt_bboxes_3d',
+            'gt_labels_3d',
+            'pose_matrix',
+            'axis_align_matrix',
+            'avg_distance',
+        ],
+        type='PackNeRFDetInputs'),
+]
+train_cfg = dict(max_epochs=400, type='EpochBasedTrainLoop', val_interval=2)
+train_collect_keys = [
+    'img',
+    'gt_bboxes_3d',
+    'gt_labels_3d',
+    'lightpos',
+    'nerf_sizes',
+    'raydirs',
+    'gt_images',
+    'c2w',
+    'intrinsic',
+    'points',
+    'pose_matrix',
+    'axis_align_matrix',
+    'avg_distance',
+]
+train_dataloader = dict(
+    batch_size=1,
+    dataset=dict(
+        dataset=dict(
+            ann_file='scannet_infos_train_pts.pkl',
+            box_type_3d='Depth',
+            data_root='/lv_workdir/data/ScanNet_processed/',
+            filter_empty_gt=True,
+            metainfo=dict(CLASSES=[
+                'cabinet',
+                'bed',
+                'chair',
+                'sofa',
+                'table',
+                'door',
+                'window',
+                'bookshelf',
+                'picture',
+                'counter',
+                'desk',
+                'curtain',
+                'refrigerator',
+                'showercurtrain',
+                'toilet',
+                'sink',
+                'bathtub',
+                'garbagebin',
+            ]),
+            modality=dict(
+                use_camera=True,
+                use_depth=False,
+                use_lidar=False,
+                use_neuralrecon_depth=False,
+                use_ray=True),
+            pipeline=[
+                dict(
+                    backend_args=None,
+                    coord_type='DEPTH',
+                    data_root='/lv_workdir/data/ScanNet_processed/',
+                    load_dim=6,
+                    shift_height=False,
+                    type='LoadPointsFromFile',
+                    use_color=True,
+                    use_dim=[
+                        0,
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                    ]),
+                dict(type='LoadAnnotations3D'),
+                dict(num_points=100000, type='PointSample'),
+                dict(
+                    depth_range=[
+                        0.5,
+                        5.5,
+                    ],
+                    loading='gap',
+                    margin=10,
+                    n_images=42,
+                    nerf_target_views=2,
+                    normalize=False,
+                    tgt_transforms=[
+                        dict(
+                            file_client_args=dict(backend='disk'),
+                            type='LoadImageFromFile'),
+                        dict(
+                            interpolation='bicubic',
+                            keep_ratio=True,
+                            scale=(
+                                448,
+                                448,
+                            ),
+                            type='Resize'),
+                    ],
+                    transforms=[
+                        dict(
+                            file_client_args=dict(backend='disk'),
+                            type='LoadImageFromFile'),
+                        dict(
+                            interpolation='bicubic',
+                            keep_ratio=True,
+                            scale=(
+                                448,
+                                448,
+                            ),
+                            type='Resize'),
+                    ],
+                    type='MultiViewPipeline_Tgt'),
+                dict(std=(
+                    0.7,
+                    0.7,
+                    0.0,
+                ), type='RandomShiftOrigin'),
+                dict(coord_type='DEPTH', type='ProjectPCtoFirstFrameAndNorm'),
+                dict(
+                    keys=[
+                        'img',
+                        'gt_bboxes_3d',
+                        'gt_labels_3d',
+                        'lightpos',
+                        'nerf_sizes',
+                        'raydirs',
+                        'gt_images',
+                        'c2w',
+                        'intrinsic',
+                        'points',
+                        'pose_matrix',
+                        'axis_align_matrix',
+                        'avg_distance',
+                    ],
+                    type='PackNeRFDetInputs'),
+            ],
+            test_mode=False,
+            type='MultiViewScanNetDataset'),
+        times=6,
+        type='RepeatDataset'),
+    num_workers=8,
+    persistent_workers=True,
+    sampler=dict(shuffle=True, type='DefaultSampler'))
+train_pipeline = [
+    dict(
+        backend_args=None,
+        coord_type='DEPTH',
+        data_root='/lv_workdir/data/ScanNet_processed/',
+        load_dim=6,
+        shift_height=False,
+        type='LoadPointsFromFile',
+        use_color=True,
+        use_dim=[
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+        ]),
+    dict(type='LoadAnnotations3D'),
+    dict(num_points=100000, type='PointSample'),
+    dict(
+        depth_range=[
+            0.5,
+            5.5,
+        ],
+        loading='gap',
+        margin=10,
+        n_images=42,
+        nerf_target_views=2,
+        normalize=False,
+        tgt_transforms=[
+            dict(
+                file_client_args=dict(backend='disk'),
+                type='LoadImageFromFile'),
+            dict(
+                interpolation='bicubic',
+                keep_ratio=True,
+                scale=(
+                    448,
+                    448,
+                ),
+                type='Resize'),
+        ],
+        transforms=[
+            dict(
+                file_client_args=dict(backend='disk'),
+                type='LoadImageFromFile'),
+            dict(
+                interpolation='bicubic',
+                keep_ratio=True,
+                scale=(
+                    448,
+                    448,
+                ),
+                type='Resize'),
+        ],
+        type='MultiViewPipeline_Tgt'),
+    dict(std=(
+        0.7,
+        0.7,
+        0.0,
+    ), type='RandomShiftOrigin'),
+    dict(coord_type='DEPTH', type='ProjectPCtoFirstFrameAndNorm'),
+    dict(
+        keys=[
+            'img',
+            'gt_bboxes_3d',
+            'gt_labels_3d',
+            'lightpos',
+            'nerf_sizes',
+            'raydirs',
+            'gt_images',
+            'c2w',
+            'intrinsic',
+            'points',
+            'pose_matrix',
+            'axis_align_matrix',
+            'avg_distance',
+        ],
+        type='PackNeRFDetInputs'),
+]
+use_depth = False
+val_cfg = dict()
+val_dataloader = dict(
+    batch_size=1,
+    dataset=dict(
+        ann_file='scannet_infos_val_pts.pkl',
+        box_type_3d='Depth',
+        data_root='/lv_workdir/data/ScanNet_processed/',
+        filter_empty_gt=True,
+        metainfo=dict(CLASSES=[
+            'cabinet',
+            'bed',
+            'chair',
+            'sofa',
+            'table',
+            'door',
+            'window',
+            'bookshelf',
+            'picture',
+            'counter',
+            'desk',
+            'curtain',
+            'refrigerator',
+            'showercurtrain',
+            'toilet',
+            'sink',
+            'bathtub',
+            'garbagebin',
+        ]),
+        modality=dict(
+            use_camera=True,
+            use_depth=False,
+            use_lidar=False,
+            use_neuralrecon_depth=False,
+            use_ray=True),
+        pipeline=[
+            dict(
+                backend_args=None,
+                coord_type='DEPTH',
+                data_root='/lv_workdir/data/ScanNet_processed/',
+                load_dim=6,
+                shift_height=False,
+                type='LoadPointsFromFile',
+                use_color=True,
+                use_dim=[
+                    0,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                ]),
+            dict(type='LoadAnnotations3D'),
+            dict(num_points=100000, type='PointSample'),
+            dict(
+                depth_range=[
+                    0.5,
+                    5.5,
+                ],
+                loading='random',
+                margin=10,
+                n_images=81,
+                nerf_target_views=1,
+                normalize=False,
+                tgt_transforms=[
+                    dict(
+                        file_client_args=dict(backend='disk'),
+                        type='LoadImageFromFile'),
+                    dict(
+                        interpolation='bicubic',
+                        keep_ratio=True,
+                        scale=(
+                            448,
+                            448,
+                        ),
+                        type='Resize'),
+                ],
+                transforms=[
+                    dict(
+                        file_client_args=dict(backend='disk'),
+                        type='LoadImageFromFile'),
+                    dict(
+                        interpolation='bicubic',
+                        keep_ratio=True,
+                        scale=(
+                            448,
+                            448,
+                        ),
+                        type='Resize'),
+                ],
+                type='MultiViewPipeline_Tgt'),
+            dict(coord_type='DEPTH', type='ProjectPCtoFirstFrameAndNorm'),
+            dict(
+                keys=[
+                    'img',
+                    'lightpos',
+                    'nerf_sizes',
+                    'raydirs',
+                    'gt_images',
+                    'c2w',
+                    'intrinsic',
+                    'points',
+                    'gt_bboxes_3d',
+                    'gt_labels_3d',
+                    'pose_matrix',
+                    'axis_align_matrix',
+                    'avg_distance',
+                ],
+                type='PackNeRFDetInputs'),
+        ],
+        test_mode=True,
+        type='MultiViewScanNetDataset'),
+    drop_last=False,
+    num_workers=8,
+    persistent_workers=True,
+    sampler=dict(shuffle=False, type='DefaultSampler'))
+val_evaluator = [
+    dict(type='IndoorMetric'),
+]
+vggt_omega_checkpoint = '/lv_workdir/data/pretrain/vggt_omega_1b_512.pt'
+vis_backends = [
+    dict(type='LocalVisBackend'),
+]
+visualizer = dict(
+    name='visualizer',
+    type='Det3DLocalVisualizer',
+    vis_backends=[
+        dict(type='LocalVisBackend'),
+    ])
+work_dir = './work_dirs/vggtdet_scannet'
