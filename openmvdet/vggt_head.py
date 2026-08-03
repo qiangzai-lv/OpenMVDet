@@ -18,8 +18,8 @@ from mmdet3d.structures.det3d_data_sample import SampleList
 from mmdet3d.structures.ops.iou3d_calculator import axis_aligned_bbox_overlaps_3d
 from mmdet3d.utils.typing_utils import (ConfigType, InstanceList,
                                         OptConfigType, OptInstanceList)
-from projects.Dudet.detr3_models.helpers import GenericMLP
-from projects.Dudet.detr3_models.utils.votenet_pc_util import write_ply_rgb, write_bbox
+from .detr3_models.helpers import GenericMLP
+from .detr3_models.utils.votenet_pc_util import write_ply_rgb, write_bbox
 
 
 @MODELS.register_module()

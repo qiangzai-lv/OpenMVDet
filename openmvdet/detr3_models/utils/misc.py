@@ -3,8 +3,8 @@ import torch
 import numpy as np
 from collections import deque
 from typing import List
-from projects.Dudet.detr3_models.utils.dist import is_distributed, barrier, all_reduce_sum
-from projects.Dudet.vggtdet.device import get_device
+from .dist import is_distributed, barrier, all_reduce_sum
+from ...device import get_device
 
 
 def my_worker_init_fn(worker_id):

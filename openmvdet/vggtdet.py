@@ -1,6 +1,5 @@
-import sys
-from pathlib import Path
 from typing import List, Tuple, Union
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -9,18 +8,14 @@ from mmdet3d.models.detectors import Base3DDetector
 from mmdet3d.registry import MODELS
 from mmdet3d.structures.det3d_data_sample import SampleList
 from mmdet3d.utils import ConfigType, OptConfigType
-from projects.Dudet.detr3_models.helpers import GenericMLP
-from projects.Dudet.detr3_models.position_embedding import PositionEmbeddingCoordsSine
-from projects.Dudet.detr3_models.utils.votenet_pc_util import write_ply_rgb
-from projects.Dudet.vggtdet.device import autocast, get_device
-from projects.Dudet.vggtdet.geometry_attention import GeometryAwareDeformableDecoder
+from .detr3_models.helpers import GenericMLP
+from .detr3_models.position_embedding import PositionEmbeddingCoordsSine
+from .detr3_models.utils.votenet_pc_util import write_ply_rgb
+from .device import autocast, get_device
+from .geometry_attention import GeometryAwareDeformableDecoder
 
-_VGGT_OMEGA_ROOT = Path(__file__).resolve().parents[3] / 'vggt-omega'
-if str(_VGGT_OMEGA_ROOT) not in sys.path:
-    sys.path.insert(0, str(_VGGT_OMEGA_ROOT))
-
-from vggt_omega.models import VGGTOmega
-from vggt_omega.utils.pose_enc import encoding_to_camera
+from .vggt_omega.models import VGGTOmega
+from .vggt_omega.utils.pose_enc import encoding_to_camera
 
 device = get_device()
 
