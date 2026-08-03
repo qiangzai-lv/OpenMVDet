@@ -2,7 +2,7 @@ from .data_preprocessor import VGGTDetDataPreprocessor
 from .formating import PackNeRFDetInputs
 from .multiview_pipeline import MultiViewPipeline, RandomShiftOrigin
 from .scannet_multiview_dataset import MultiViewScanNetDataset
-from .vggtdet import VGGTDet
+from .openmvdet import VGGTDet
 from .vggt_head import VGGTDetHead
 
 __all__ = [
