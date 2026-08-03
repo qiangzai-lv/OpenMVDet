@@ -14,8 +14,8 @@ from .detr3_models.utils.votenet_pc_util import write_ply_rgb
 from .device import autocast, get_device
 from .geometry_attention import GeometryAwareDecoder
 
-from .vggt_omega.models import VGGTOmega
-from .vggt_omega.utils.pose_enc import encoding_to_camera
+from vggt_omega.models import VGGTOmega
+from vggt_omega.utils.pose_enc import encoding_to_camera
 
 device = get_device()
 
