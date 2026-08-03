@@ -2,7 +2,6 @@
 __pycache__/
 *.py[cod]
 *$py.class
-*.ipynb
 
 # C extensions
 *.so
@@ -104,34 +103,22 @@ venv.bak/
 
 # mypy
 .mypy_cache/
-
-# cython generated cpp
+data/
 data
 .vscode
 .idea
+.DS_Store
 
 # custom
 *.pkl
 *.pkl.json
 *.log.json
+docs/modelzoo_statistics.md
+mmdet/.mim
 work_dirs/
-exps/
-*~
-mmdet3d/.mim
 
 # Pytorch
 *.pth
+*.py~
+*.sh~
 
-# demo
-*.jpg
-*.png
-data/s3dis/Stanford3dDataset_v1.2_Aligned_Version/
-data/scannet/scans/
-data/sunrgbd/OFFICIAL_SUNRGBD/
-*.obj
-*.ply
-
-# Waymo evaluation
-mmdet3d/evaluation/functional/waymo_utils/compute_detection_metrics_main
-mmdet3d/evaluation/functional/waymo_utils/compute_detection_let_metrics_main
-mmdet3d/evaluation/functional/waymo_utils/compute_segmentation_metrics_main
