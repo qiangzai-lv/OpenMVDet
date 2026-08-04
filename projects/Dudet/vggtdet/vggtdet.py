@@ -141,7 +141,6 @@ class VGGTDet(Base3DDetector):
             feedforward_channels=decoder_cfg['dec_ffn_dim'],
             num_feature_levels=4 if use_multi_layers else 1,
             num_points=deformable_num_points,
-            view_topk=decoder_cfg.get('view_topk', 8),
             dropout=decoder_cfg['dec_dropout'])
 
         if if_simpler_project:

@@ -3,6 +3,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from mmcv.ops import MultiScaleDeformableAttention
 
 
 def project_queries_to_views(query_xyz, extrinsics, intrinsics,
@@ -24,32 +25,18 @@ def project_queries_to_views(query_xyz, extrinsics, intrinsics,
     return reference_points.permute(0, 2, 1, 3), visible.permute(0, 2, 1)
 
 
-class ProjectedFullCrossAttention(nn.Module):
-    """Select views, then map each feature level to one attention head."""
-
+class ProjectedDeformableCrossAttention(nn.Module):
     def __init__(self, embed_dims, num_heads, num_feature_levels,
-                 view_topk=8, dropout=0.0):
+                 num_points, dropout=0.0):
         super().__init__()
-        if num_heads != num_feature_levels:
-            raise ValueError(
-                'Level-mapped attention requires num_heads == num_feature_levels')
-        if embed_dims % num_heads != 0:
-            raise ValueError('embed_dims must be divisible by num_heads')
         self.num_feature_levels = num_feature_levels
-        self.view_topk = view_topk
-        head_dim = embed_dims // num_heads
-        self.query_projs = nn.ModuleList(
-            [nn.Linear(embed_dims, head_dim) for _ in range(num_heads)])
-        self.key_projs = nn.ModuleList(
-            [nn.Linear(embed_dims, head_dim) for _ in range(num_heads)])
-        self.value_projs = nn.ModuleList(
-            [nn.Linear(embed_dims, head_dim) for _ in range(num_heads)])
-        self.level_attn = nn.ModuleList([
-            nn.MultiheadAttention(
-                head_dim, 1, dropout=dropout, batch_first=True)
-            for _ in range(num_heads)
-        ])
-        self.out_proj = nn.Linear(embed_dims, embed_dims)
+        self.deformable_attn = MultiScaleDeformableAttention(
+            embed_dims=embed_dims,
+            num_heads=num_heads,
+            num_levels=num_feature_levels,
+            num_points=num_points,
+            dropout=dropout,
+            batch_first=True)
 
     def forward(self, query, query_pos, feature_maps, reference_points,
                 view_mask):
@@ -59,66 +46,63 @@ class ProjectedFullCrossAttention(nn.Module):
             raise ValueError('Unexpected number of feature levels')
 
         value_levels = []
+        spatial_shapes = []
         for feature_map in feature_maps:
             _, views, feature_channels, height, width = feature_map.shape
             if views != num_views or feature_channels != channels:
                 raise ValueError('Feature-map views or channels do not match queries')
             value_levels.append(feature_map.permute(0, 1, 3, 4, 2).reshape(
-                batch_size, num_views, height * width, channels))
-
-        # View selection uses only projection geometry, before image attention.
-        refs = reference_points.nan_to_num(0.5).clamp(0., 1.)
-        center_distance = torch.linalg.vector_norm(refs - 0.5, dim=-1)
-        geometry_scores = (1.0 - center_distance / math.sqrt(0.5)).clamp_min(0.)
-        geometry_scores = geometry_scores * view_mask.float()
-        view_quality = geometry_scores.mean(dim=1)
-        topk = min(self.view_topk, num_views) if self.view_topk > 0 else num_views
-        _, selected_views = view_quality.topk(topk, dim=1)
-        selected_valid = view_mask.gather(2, selected_views[:, None].expand(
-            -1, num_queries, -1))
-        selected_scores = geometry_scores.gather(
-            2, selected_views[:, None].expand(-1, num_queries, -1))
-        selected_scores = selected_scores.masked_fill(~selected_valid, -torch.inf)
+                batch_size * num_views, height * width, channels))
+            spatial_shapes.append((height, width))
+        value = torch.cat(value_levels, dim=1).contiguous()
+        spatial_shapes = torch.as_tensor(
+            spatial_shapes, dtype=torch.long, device=query.device)
+        level_start_index = torch.cat([
+            spatial_shapes.new_zeros(1),
+            spatial_shapes.prod(dim=1).cumsum(dim=0)[:-1]
+        ])
 
         query_per_view = query[:, None].expand(
-            -1, topk, -1, -1).reshape(batch_size * topk, num_queries, channels)
+            -1, num_views, -1, -1).reshape(
+                batch_size * num_views, num_queries, channels)
         query_pos_per_view = query_pos[:, None].expand(
-            -1, topk, -1, -1).reshape_as(query_per_view)
-        query_per_view = query_per_view + query_pos_per_view
+            -1, num_views, -1, -1).reshape_as(query_per_view)
+        reference_per_view = reference_points.permute(0, 2, 1, 3).reshape(
+            batch_size * num_views, num_queries, 1, 2)
+        reference_per_view = reference_per_view.nan_to_num(0.5).clamp(0., 1.)
+        reference_per_view = reference_per_view.expand(
+            -1, -1, self.num_feature_levels, -1)
 
-        # Head i attends only to feature level i, while covering that level's
-        # complete spatial token sequence.
-        head_outputs = []
-        for level_id in range(self.num_feature_levels):
-            selected_tokens = value_levels[level_id].gather(
-                1, selected_views[:, :, None, None].expand(
-                    -1, -1, value_levels[level_id].shape[2], channels))
-            selected_tokens = selected_tokens.reshape(
-                batch_size * topk, value_levels[level_id].shape[2], channels)
-            with torch.autocast(device_type=query.device.type, enabled=False):
-                head_query = self.query_projs[level_id](query_per_view.float())
-                head_key = self.key_projs[level_id](selected_tokens.float())
-                head_value = self.value_projs[level_id](selected_tokens.float())
-                head_output = self.level_attn[level_id](
-                    head_query, head_key, head_value, need_weights=False)[0]
-            head_outputs.append(head_output)
+        output_dtype = query.dtype
+        with torch.autocast(device_type=query.device.type, enabled=False):
+            attended = self.deformable_attn(
+                query=query_per_view.float(),
+                value=value.float(),
+                identity=torch.zeros_like(query_per_view, dtype=torch.float32),
+                query_pos=query_pos_per_view.float(),
+                reference_points=reference_per_view.float(),
+                spatial_shapes=spatial_shapes,
+                level_start_index=level_start_index)
+        attended = attended.to(output_dtype)
+        attended = attended.reshape(batch_size, num_views, num_queries, channels)
+        valid_views = view_mask.permute(0, 2, 1)
+        attended = attended * valid_views[..., None]
 
-        attended = self.out_proj(torch.cat(head_outputs, dim=-1))
-        attended = attended.to(query.dtype).reshape(
-            batch_size, topk, num_queries, channels).permute(0, 2, 1, 3)
-        weights = torch.softmax(selected_scores, dim=-1)
-        weights = torch.nan_to_num(weights, nan=0.)
-        return (weights[..., None] * attended).sum(dim=2)
+        view_query = (query + query_pos)[:, None]
+        view_scores = (view_query * attended).sum(dim=-1) / math.sqrt(channels)
+        view_scores = view_scores.masked_fill(~valid_views, -torch.inf)
+        view_weights = torch.nan_to_num(view_scores.softmax(dim=1), nan=0.)
+        return (view_weights[..., None] * attended).sum(dim=1)
 
 
 class GeometryAwareDecoderLayer(nn.Module):
     def __init__(self, embed_dims, num_heads, feedforward_channels,
-                 num_feature_levels, view_topk, dropout=0.0):
+                 num_feature_levels, num_points, dropout=0.0):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(
             embed_dims, num_heads, dropout=dropout, batch_first=True)
-        self.cross_attn = ProjectedFullCrossAttention(
-            embed_dims, num_heads, num_feature_levels, view_topk, dropout)
+        self.cross_attn = ProjectedDeformableCrossAttention(
+            embed_dims, num_heads, num_feature_levels, num_points, dropout)
         self.linear1 = nn.Linear(embed_dims, feedforward_channels)
         self.linear2 = nn.Linear(feedforward_channels, embed_dims)
         self.norm1 = nn.LayerNorm(embed_dims)
@@ -143,12 +127,12 @@ class GeometryAwareDecoderLayer(nn.Module):
 
 class GeometryAwareDeformableDecoder(nn.Module):
     def __init__(self, embed_dims, num_layers, num_heads, feedforward_channels,
-                 num_feature_levels, num_points=4, view_topk=8, dropout=0.0):
+                 num_feature_levels, num_points=4, dropout=0.0):
         super().__init__()
         self.layers = nn.ModuleList([
             GeometryAwareDecoderLayer(
                 embed_dims, num_heads, feedforward_channels,
-                num_feature_levels, view_topk, dropout)
+                num_feature_levels, num_points, dropout)
             for _ in range(num_layers)
         ])
         self.norm = nn.LayerNorm(embed_dims)

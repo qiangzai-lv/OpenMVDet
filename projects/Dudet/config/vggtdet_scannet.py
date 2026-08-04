@@ -40,8 +40,7 @@ model = dict(
         dec_nhead=4,
         dec_ffn_dim=_token_dim_,
         dec_dropout=0.1,
-        dec_nlayers=_decoder_layer_num,
-        view_topk=12
+        dec_nlayers=_decoder_layer_num
     ),
     bbox_head=dict(
         type='VGGTDetHead',
