@@ -649,6 +649,7 @@ class MultiViewPipeline_Tgt(BaseTransform):
         imgs = []
         depths = []
         extrinsics = []
+        gt_camera_intrinsics = []
         c2ws = []
         camrotc2ws = []
         lightposes = []
@@ -745,6 +746,11 @@ class MultiViewPipeline_Tgt(BaseTransform):
                 denorm_imgs_list.append(denorm_img)
             height, width = padded_img.shape[:2]
             extrinsics.append(results['lidar2img']['extrinsic'][i])
+            gt_intrinsic = results['lidar2img']['intrinsic'].copy()[:3, :3]
+            scale_factor = np.asarray(_results['scale_factor'])
+            gt_intrinsic[0, :] *= scale_factor[0]
+            gt_intrinsic[1, :] *= scale_factor[1]
+            gt_camera_intrinsics.append(gt_intrinsic.astype(np.float32))
 
         # prepare the nerf information
         if 'ray_info' in results.keys():
@@ -840,6 +846,9 @@ class MultiViewPipeline_Tgt(BaseTransform):
         if len(depths) != 0:
             results['depth'] = depths
         results['lidar2img']['extrinsic'] = extrinsics # w2c src view.
+        results['gt_camera_extrinsics'] = np.asarray(extrinsics, dtype=np.float32)
+        results['gt_camera_intrinsics'] = np.asarray(
+            gt_camera_intrinsics, dtype=np.float32)
         return results
 
 
