@@ -77,12 +77,20 @@ class Mlp(nn.Module):
 
 
 def init_t_xy(
-    end_x: int, end_y: int, scale: float = 1.0, offset: int = 0
+    end_x: int,
+    end_y: int,
+    scale: Union[float, Tuple[float, float]] = 1.0,
+    offset: int = 0,
+    device=None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    t = torch.arange(end_x * end_y, dtype=torch.float32)
+    t = torch.arange(end_x * end_y, dtype=torch.float32, device=device)
     t_x = (t % end_x).float()
     t_y = torch.div(t, end_x, rounding_mode="floor").float()
-    return t_x * scale + offset, t_y * scale + offset
+    if isinstance(scale, tuple):
+        scale_x, scale_y = scale
+    else:
+        scale_x = scale_y = scale
+    return t_x * scale_x + offset, t_y * scale_y + offset
 
 
 def compute_axial_cis(
@@ -90,13 +98,16 @@ def compute_axial_cis(
     end_x: int,
     end_y: int,
     theta: float = 10000.0,
-    scale_pos: float = 1.0,
+    scale_pos: Union[float, Tuple[float, float]] = 1.0,
     offset: int = 0,
+    device=None,
 ) -> torch.Tensor:
-    freqs_x = 1.0 / (theta ** (torch.arange(0, dim, 4)[: (dim // 4)].float() / dim))
-    freqs_y = 1.0 / (theta ** (torch.arange(0, dim, 4)[: (dim // 4)].float() / dim))
+    dim_indices = torch.arange(0, dim, 4, device=device)[: (dim // 4)]
+    freqs_x = 1.0 / (theta ** (dim_indices.float() / dim))
+    freqs_y = 1.0 / (theta ** (dim_indices.float() / dim))
 
-    t_x, t_y = init_t_xy(end_x, end_y, scale_pos, offset)
+    t_x, t_y = init_t_xy(
+        end_x, end_y, scale_pos, offset, device=device)
     freqs_x = torch.outer(t_x, freqs_x)
     freqs_y = torch.outer(t_y, freqs_y)
     freqs_cis_x = torch.polar(torch.ones_like(freqs_x), freqs_x)
@@ -533,11 +544,14 @@ class Attention(nn.Module):
             # interpolate rope
             scale_pos = 1.0
             if self.rope_interp:
-                scale_pos = self.rope_pt_size[0] / self.input_size[0]
+                scale_pos = (
+                    self.rope_pt_size[1] / self.input_size[1],
+                    self.rope_pt_size[0] / self.input_size[0],
+                )
             # get scaled freqs_cis
             freqs_cis = self.compute_cis(
-                end_x=self.input_size[0],
-                end_y=self.input_size[1],
+                end_x=self.input_size[1],
+                end_y=self.input_size[0],
                 scale_pos=scale_pos,
             )
         if self.cls_token:
@@ -554,7 +568,35 @@ class Attention(nn.Module):
             self.register_buffer("freqs_cis_real", freqs_cis.real)
             self.register_buffer("freqs_cis_imag", freqs_cis.imag)
 
-    def _apply_rope(self, q, k) -> Tuple[Tensor, Tensor]:
+    def _rope_freqs_for_shape(self, height, width, device):
+        expected_tokens = height * width + int(self.cls_token)
+        if self.freqs_cis.shape[0] == expected_tokens:
+            return self.freqs_cis
+        if self.rope_tiled:
+            raise ValueError('Dynamic input sizes do not support tiled RoPE')
+
+        scale_pos = 1.0
+        if self.rope_interp:
+            scale_pos = (
+                self.rope_pt_size[1] / width,
+                self.rope_pt_size[0] / height,
+            )
+        freqs_cis = self.compute_cis(
+            end_x=width,
+            end_y=height,
+            scale_pos=scale_pos,
+            device=device,
+        )
+        if self.cls_token:
+            cls_freqs = torch.zeros(
+                1, self.head_dim // 2, dtype=torch.float32, device=device)
+            freqs_cis = torch.cat([
+                torch.polar(torch.ones_like(cls_freqs), cls_freqs),
+                freqs_cis,
+            ], dim=0)
+        return freqs_cis
+
+    def _apply_rope(self, q, k, spatial_shape) -> Tuple[Tensor, Tensor]:
         if not self.use_rope:
             return q, k
 
@@ -563,17 +605,17 @@ class Attention(nn.Module):
             return self.rope(q).to(dtype), self.rope(k).to(dtype)
 
         assert self.freqs_cis is not None
+        freqs_cis = self._rope_freqs_for_shape(
+            spatial_shape[0], spatial_shape[1], q.device)
 
         if self.use_rope_real:
             return apply_rotary_enc_real(
                 q,
                 k,
-                # pyrefly: ignore [bad-argument-type]
-                freqs_cis_imag=self.freqs_cis_imag,
-                # pyrefly: ignore [bad-argument-type]
-                freqs_cis_real=self.freqs_cis_real,
+                freqs_cis_imag=freqs_cis.imag,
+                freqs_cis_real=freqs_cis.real,
             )
-        return apply_rotary_enc(q, k, freqs_cis=self.freqs_cis)
+        return apply_rotary_enc(q, k, freqs_cis=freqs_cis)
 
     def forward(self, x: Tensor) -> Tensor:
         s = 1 if self.cls_token else 0  # used to exclude cls_token
@@ -594,7 +636,7 @@ class Attention(nn.Module):
         q, k, v = qkv.permute(2, 0, 3, 1, 4).unbind(0)
 
         # handle rope and rel pos embeddings
-        q, k = self._apply_rope(q, k)
+        q, k = self._apply_rope(q, k, (int(H), int(W)))
         if self.use_rel_pos:
             q, k = concat_rel_pos(
                 q.flatten(0, 1),

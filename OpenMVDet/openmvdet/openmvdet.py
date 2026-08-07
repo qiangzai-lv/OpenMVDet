@@ -5,6 +5,7 @@ from typing import List, Tuple, Union
 import torch
 import torch.nn as nn
 
+from mmengine.logging import print_log
 from mmdet3d.models.detectors import Base3DDetector
 from mmdet3d.registry import MODELS
 from mmdet3d.structures.det3d_data_sample import SampleList
@@ -157,6 +158,20 @@ class OpenMVDet(Base3DDetector):
             fusion_cfg = dict(sam3_fusion_cfg or {})
             fusion_cfg.setdefault('embed_dims', token_dim)
             self.semantic_fusion = SemanticDeformableFusion(**fusion_cfg)
+            frozen_numel = sum(
+                param.numel() for param in self.sam3_image_trunk.parameters())
+            frozen_numel += sum(
+                param.numel() for param in self.sam3_feature_necks.parameters())
+            fusion_numel = sum(
+                param.numel() for param in self.semantic_fusion.parameters())
+            print_log(
+                '[SAM3] OpenMVDet semantic branch ready: '
+                f'checkpoint={sam3_checkpoint}, device={device}, '
+                'frozen=True, feature_levels=(1/7, 1/14), '
+                f'view_chunk_size={sam3_view_chunk_size}, '
+                f'frozen_parameters={frozen_numel:,}, '
+                f'trainable_fusion_parameters={fusion_numel:,}',
+                logger='current')
 
         self.geometry_decoder = GeometryAwareDeformableDecoder(
             embed_dims=token_dim,
