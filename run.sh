@@ -1,1 +1,1 @@
-bash ./tools/dist_train.sh projects/Dudet/config/vggtdet_scannet.py 1
+bash ./tools/dist_train.sh OpenMVDet/config/openmvdet_scannet.py 1
