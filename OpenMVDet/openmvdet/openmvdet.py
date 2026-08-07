@@ -139,7 +139,7 @@ class OpenMVDet(Base3DDetector):
                     'SAM3 semantic fusion requires four VGGT feature levels')
             if sam3_view_chunk_size <= 0:
                 raise ValueError('sam3_view_chunk_size must be positive')
-            from sam3 import build_sam3_vision_encoder
+            from sam3.vision_builder import build_sam3_vision_encoder
 
             sam3_encoder = build_sam3_vision_encoder(
                 checkpoint_path=sam3_checkpoint, device='cpu', eval_mode=True)
