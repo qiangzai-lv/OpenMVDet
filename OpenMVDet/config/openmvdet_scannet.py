@@ -25,7 +25,7 @@ _decoder_layer_num = 8
 model = dict(
     type='OpenMVDet',
     data_preprocessor=dict(
-        type='VGGTDetDataPreprocessor',
+        type='OpenMVDetDataPreprocessor',
         mean=None,
         std=None,
         bgr_to_rgb=True,
@@ -93,28 +93,22 @@ class_names = [
 metainfo = dict(CLASSES=class_names)
 file_client_args = dict(backend='disk')
 
-use_depth = False
 input_modality = dict(
     use_camera=True,
-    use_depth=use_depth,
+    use_depth=False,
     use_lidar=False,
     use_neuralrecon_depth=False,
-    use_ray=True)  # use_depth will load depth map during multi-view pipeline
+    use_ray=False)
 backend_args = None
 
 train_collect_keys = [
-    'img', 'gt_bboxes_3d', 'gt_labels_3d', 'lightpos', 'nerf_sizes', 'raydirs',
-    'gt_images',
-    'c2w', 'intrinsic', 'points', 'pose_matrix', 'axis_align_matrix', 'avg_distance'
-]  # here add depth will load depth as input
+    'img', 'gt_bboxes_3d', 'gt_labels_3d', 'points', 'pose_matrix',
+    'axis_align_matrix', 'avg_distance'
+]
 
 test_collect_keys = [
-    'img',
-    'lightpos',
-    'nerf_sizes',
-    'raydirs',
-    'gt_images',
-    'c2w', 'intrinsic', 'points', 'gt_bboxes_3d', 'gt_labels_3d', 'pose_matrix', 'axis_align_matrix', 'avg_distance'
+    'img', 'points', 'gt_bboxes_3d', 'gt_labels_3d', 'pose_matrix',
+    'axis_align_matrix', 'avg_distance'
 ]
 
 n_points = 100000
@@ -139,20 +133,13 @@ train_pipeline = [
             dict(type='LoadImageFromFile', file_client_args=file_client_args),
             dict(type='Resize', scale=(448, 448), keep_ratio=True, interpolation='bicubic'),
         ],
-        margin=10,
-        depth_range=[0.5, 5.5],  # for what purpose?
         loading='gap',
-        nerf_target_views=2,
-        normalize=False,
-        tgt_transforms=[
-            dict(type='LoadImageFromFile', file_client_args=file_client_args),
-            dict(type='Resize', scale=(448, 448), keep_ratio=True, interpolation='bicubic'),
-        ]
+        normalize=False
     ),
     dict(type='RandomShiftOrigin', std=(.7, .7, .0)),
     dict(type='ProjectPCtoFirstFrameAndNorm', coord_type='DEPTH'),
     # dict(type='NormBoxes'),
-    dict(type='PackNeRFDetInputs', keys=train_collect_keys)
+    dict(type='PackMultiViewDetInputs', keys=train_collect_keys)
 ]
 
 test_pipeline = [
@@ -175,19 +162,12 @@ test_pipeline = [
             dict(type='LoadImageFromFile', file_client_args=file_client_args),
             dict(type='Resize', scale=(448, 448), keep_ratio=True, interpolation='bicubic'),
         ],
-        margin=10,
-        depth_range=[0.5, 5.5],
         loading='random',
-        nerf_target_views=1,
-        normalize=False,
-        tgt_transforms=[
-            dict(type='LoadImageFromFile', file_client_args=file_client_args),
-            dict(type='Resize', scale=(448, 448), keep_ratio=True, interpolation='bicubic'),
-        ]
+        normalize=False
     ),
     dict(type='ProjectPCtoFirstFrameAndNorm', coord_type='DEPTH'),
     # dict(type='NormBoxes'),
-    dict(type='PackNeRFDetInputs', keys=test_collect_keys)
+    dict(type='PackMultiViewDetInputs', keys=test_collect_keys)
 ]
 
 train_dataloader = dict(

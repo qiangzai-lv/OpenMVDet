@@ -17,7 +17,7 @@ from mmdet3d.registry import MODELS
 
 
 @MODELS.register_module()
-class VGGTDetDataPreprocessor(DetDataPreprocessor):
+class OpenMVDetDataPreprocessor(DetDataPreprocessor):
 
     def __init__(self,
                  batch_first: bool = True,
@@ -34,7 +34,7 @@ class VGGTDetDataPreprocessor(DetDataPreprocessor):
                  boxtype2tensor: bool = True,
                  non_blocking: bool = False,
                  batch_augments: Optional[List[dict]] = None) -> None:
-        super(VGGTDetDataPreprocessor, self).__init__(
+        super(OpenMVDetDataPreprocessor, self).__init__(
             mean=mean,
             std=std,
             pad_size_divisor=pad_size_divisor,
