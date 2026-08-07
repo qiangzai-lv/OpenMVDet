@@ -12,6 +12,7 @@ except ImportError:
 resume = True
 
 vggt_omega_checkpoint = '/lv_workdir/data/pretrain/vggt_omega_1b_512.pt'
+sam3_checkpoint = '/lv_workdir/data/pretrain/sam3/sam3.pt'
 data_root = '/lv_workdir/data/ScanNet_processed/'
 batch_size = 1
 n_classes = 18
@@ -77,6 +78,14 @@ model = dict(
     if_simpler_project=True,
     deformable_num_points=4,
     vggt_omega_checkpoint=vggt_omega_checkpoint,
+    sam3_checkpoint=sam3_checkpoint,
+    sam3_view_chunk_size=4,
+    sam3_fusion_cfg=dict(
+        sam_channels=256,
+        num_heads=8,
+        num_points=4,
+        dropout=0.1,
+        layer_scale_init=0.0),
     query_fps_stride=16,
     query_fps_max_points=100000,
     train_cfg=dict(),

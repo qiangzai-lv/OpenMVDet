@@ -13,6 +13,9 @@ from OpenMVDet.detr3_models.helpers import GenericMLP
 from OpenMVDet.detr3_models.position_embedding import PositionEmbeddingCoordsSine
 from OpenMVDet.openmvdet.device import autocast, get_device
 from OpenMVDet.openmvdet.geometry_attention import GeometryAwareDeformableDecoder
+from OpenMVDet.openmvdet.semantic_deformable_fusion import (
+    SemanticDeformableFusion,
+)
 
 from vggt_omega.models import VGGTOmega
 from vggt_omega.utils.pose_enc import encoding_to_camera
@@ -105,6 +108,9 @@ class OpenMVDet(Base3DDetector):
             query_fps_stride=16,
             query_fps_max_points=100000,
             deformable_num_points=4,
+            sam3_checkpoint=None,
+            sam3_view_chunk_size=4,
+            sam3_fusion_cfg=None,
             ):
         
         super().__init__(data_preprocessor=data_preprocessor, init_cfg=init_cfg) 
@@ -121,6 +127,36 @@ class OpenMVDet(Base3DDetector):
             param.requires_grad = False
 
         self.vggt_encoder.eval()
+
+        self.sam3_image_trunk = None
+        self.sam3_feature_necks = None
+        self.semantic_fusion = None
+        self.sam3_view_chunk_size = sam3_view_chunk_size
+        if sam3_checkpoint is not None:
+            if not use_multi_layers:
+                raise ValueError(
+                    'SAM3 semantic fusion requires four VGGT feature levels')
+            if sam3_view_chunk_size <= 0:
+                raise ValueError('sam3_view_chunk_size must be positive')
+            from sam3 import build_sam3_vision_encoder
+
+            sam3_encoder = build_sam3_vision_encoder(
+                checkpoint_path=sam3_checkpoint, device='cpu', eval_mode=True)
+            self.sam3_image_trunk = sam3_encoder.trunk
+            self.sam3_feature_necks = nn.ModuleList([
+                sam3_encoder.convs[1],  # 1/7 resolution
+                sam3_encoder.convs[2],  # 1/14 resolution
+            ])
+            self.sam3_image_trunk.to(device)
+            self.sam3_feature_necks.to(device)
+            for module in (self.sam3_image_trunk, self.sam3_feature_necks):
+                for param in module.parameters():
+                    param.requires_grad = False
+                module.eval()
+
+            fusion_cfg = dict(sam3_fusion_cfg or {})
+            fusion_cfg.setdefault('embed_dims', token_dim)
+            self.semantic_fusion = SemanticDeformableFusion(**fusion_cfg)
 
         self.geometry_decoder = GeometryAwareDeformableDecoder(
             embed_dims=token_dim,
@@ -209,6 +245,37 @@ class OpenMVDet(Base3DDetector):
 
 
     @torch.no_grad()
+    def _extract_sam3_features(self, images):
+        if self.sam3_image_trunk is None:
+            return None
+        if self.sam3_image_trunk.training or self.sam3_feature_necks.training:
+            self.sam3_image_trunk.eval()
+            self.sam3_feature_necks.eval()
+
+        batch_size, num_views, channels, height, width = images.shape
+        if height % 14 != 0 or width % 14 != 0:
+            raise ValueError('SAM3 and VGGT inputs must be padded to a multiple of 14')
+        sam3_images = images.mul(2.0).sub(1.0).reshape(
+            batch_size * num_views, channels, height, width)
+        feature_chunks = [[], []]
+        with autocast(images.device):
+            for start in range(0, len(sam3_images), self.sam3_view_chunk_size):
+                image_chunk = sam3_images[
+                    start:start + self.sam3_view_chunk_size]
+                trunk_feature = self.sam3_image_trunk(image_chunk)[-1]
+                for level, neck in enumerate(self.sam3_feature_necks):
+                    feature_chunks[level].append(neck(trunk_feature))
+
+        feature_maps = []
+        for chunks in feature_chunks:
+            feature = torch.cat(chunks, dim=0)
+            feature_maps.append(feature.reshape(
+                batch_size, num_views, feature.shape[1],
+                feature.shape[2], feature.shape[3]))
+        return feature_maps
+
+
+    @torch.no_grad()
     def extract_feat(self, batch_inputs_dict: dict):
 
         if self.vggt_encoder.training:
@@ -221,7 +288,8 @@ class OpenMVDet(Base3DDetector):
             with autocast(device):
                 img = batch_inputs_dict['imgs'].float().div(255.0)
                 aggregated_tokens_list, ps_idx = self.vggt_encoder.aggregator(img)
-                return aggregated_tokens_list, ps_idx, img
+                sam3_feature_maps = self._extract_sam3_features(img)
+                return aggregated_tokens_list, ps_idx, img, sam3_feature_maps
 
     @staticmethod
     @torch.no_grad()
@@ -314,13 +382,16 @@ class OpenMVDet(Base3DDetector):
         return feature_maps
 
     def get_box_features(self, vggt_token_list, ps_idx, batch_inputs_dict,
-                         images, batch_data_samples):
+                         images, sam3_feature_maps, batch_data_samples):
 
         query_xyz, extrinsics, intrinsics, coordinate_scale = self._build_pred_pc_fps_queries(
             vggt_token_list, ps_idx, images, batch_inputs_dict,
             batch_data_samples)
         feature_maps = self._build_patch_feature_maps(
             vggt_token_list, ps_idx, images.shape[-2:])
+        if self.semantic_fusion is not None:
+            feature_maps = self.semantic_fusion(
+                feature_maps, sam3_feature_maps)
         query = self.geometry_queries.unsqueeze(0).expand(
             query_xyz.shape[0], -1, -1).to(dtype=feature_maps[0].dtype)
         batch_inputs_dict['query_xyz'] = query_xyz
@@ -334,15 +405,18 @@ class OpenMVDet(Base3DDetector):
     def loss(self, batch_inputs_dict: dict, batch_data_samples: SampleList,
              **kwargs) -> Union[dict, list]:
 
-        vggt_token_list, ps_idx, img = self.extract_feat(batch_inputs_dict)
+        vggt_token_list, ps_idx, img, sam3_features = self.extract_feat(
+            batch_inputs_dict)
 
         if self.if_mix_precision:
             with autocast(device):
                 box_features, refined_query_xyz = self.get_box_features(
                     vggt_token_list, ps_idx, batch_inputs_dict, img,
-                    batch_data_samples)
+                    sam3_features, batch_data_samples)
         else: 
-            box_features, refined_query_xyz = self.get_box_features(vggt_token_list, ps_idx, batch_inputs_dict, img, batch_data_samples)
+            box_features, refined_query_xyz = self.get_box_features(
+                vggt_token_list, ps_idx, batch_inputs_dict, img,
+                sam3_features, batch_data_samples)
 
         losses = self.bbox_head.loss(
             box_features, batch_data_samples, batch_inputs_dict,
@@ -355,15 +429,18 @@ class OpenMVDet(Base3DDetector):
     def predict(self, batch_inputs_dict: dict, batch_data_samples: SampleList,
                 **kwargs) -> SampleList:
 
-        vggt_token_list, ps_idx, img = self.extract_feat(batch_inputs_dict)
+        vggt_token_list, ps_idx, img, sam3_features = self.extract_feat(
+            batch_inputs_dict)
 
         if self.if_mix_precision:
             with autocast(device):
                 box_features, refined_query_xyz = self.get_box_features(
                     vggt_token_list, ps_idx, batch_inputs_dict, img,
-                    batch_data_samples)
+                    sam3_features, batch_data_samples)
         else:
-            box_features, refined_query_xyz = self.get_box_features(vggt_token_list, ps_idx, batch_inputs_dict, img, batch_data_samples)
+            box_features, refined_query_xyz = self.get_box_features(
+                vggt_token_list, ps_idx, batch_inputs_dict, img,
+                sam3_features, batch_data_samples)
 
         if self.test_only_last_layer:
             box_features = [box_features[-1]]
@@ -383,15 +460,18 @@ class OpenMVDet(Base3DDetector):
 
     def _forward(self, batch_inputs_dict: dict, batch_data_samples: SampleList,
                  *args, **kwargs) -> Tuple[List[torch.Tensor]]:
-        vggt_token_list, ps_idx, img = self.extract_feat(batch_inputs_dict)
+        vggt_token_list, ps_idx, img, sam3_features = self.extract_feat(
+            batch_inputs_dict)
 
         if self.if_mix_precision:
             with autocast(device):
                 box_features, refined_query_xyz = self.get_box_features(
                     vggt_token_list, ps_idx, batch_inputs_dict, img,
-                    batch_data_samples)
+                    sam3_features, batch_data_samples)
         else:
-            box_features, refined_query_xyz = self.get_box_features(vggt_token_list, ps_idx, batch_inputs_dict, img, batch_data_samples)
+            box_features, refined_query_xyz = self.get_box_features(
+                vggt_token_list, ps_idx, batch_inputs_dict, img,
+                sam3_features, batch_data_samples)
 
         if self.test_only_last_layer:
             box_features = [box_features[-1]]
