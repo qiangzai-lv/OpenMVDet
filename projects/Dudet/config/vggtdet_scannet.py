@@ -86,7 +86,6 @@ model = dict(
     if_use_pred_pc_query=True,
     if_task_query=False,
     deformable_num_points=4,
-    use_gt_camera_projection=True,
     vggt_omega_checkpoint=vggt_omega_checkpoint,
     query_fps_stride=16,
     query_fps_max_points=100000,

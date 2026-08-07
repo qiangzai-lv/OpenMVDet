@@ -116,8 +116,7 @@ class VGGTDet(Base3DDetector):
             deformable_num_points=4,
             visualize_query_points=False,
             query_visualization_path='vis_dir/query_points',
-            query_visualization_marker_size=0.05,
-            use_gt_camera_projection=False
+            query_visualization_marker_size=0.05
             ):
         
         super().__init__(data_preprocessor=data_preprocessor, init_cfg=init_cfg) 
@@ -236,7 +235,6 @@ class VGGTDet(Base3DDetector):
         self.visualize_query_points = visualize_query_points
         self.query_visualization_path = Path(query_visualization_path)
         self.query_visualization_marker_size = query_visualization_marker_size
-        self.use_gt_camera_projection = use_gt_camera_projection
         self._visualized_query_scenes = set()
 
 
@@ -390,39 +388,19 @@ class VGGTDet(Base3DDetector):
     def get_box_features(self, vggt_token_list, ps_idx, batch_inputs_dict,
                          images, batch_data_samples):
 
-        query_xyz, projection_extrinsics, projection_intrinsics, coordinate_scale = \
-            self._build_pred_pc_fps_queries(
-                vggt_token_list, ps_idx, images, batch_inputs_dict,
-                batch_data_samples)
-        if self.use_gt_camera_projection:
-            try:
-                gt_extrinsics = torch.stack([
-                    torch.as_tensor(sample.metainfo['gt_camera_extrinsics'])
-                    for sample in batch_data_samples
-                ]).to(device=query_xyz.device, dtype=torch.float32)
-                projection_intrinsics = torch.stack([
-                    torch.as_tensor(sample.metainfo['gt_camera_intrinsics'])
-                    for sample in batch_data_samples
-                ]).to(device=query_xyz.device, dtype=torch.float32)
-            except KeyError as error:
-                raise KeyError(
-                    'GT camera projection requires gt_camera_extrinsics and '
-                    'gt_camera_intrinsics in data sample metadata') from error
-            if gt_extrinsics.shape[:2] != projection_extrinsics.shape[:2]:
-                raise ValueError('GT and VGGT camera view counts must match')
-            # Express every GT camera in the first source view's camera frame,
-            # matching VGGT's first-view-origin convention.
-            projection_extrinsics = torch.matmul(
-                gt_extrinsics, torch.linalg.inv(gt_extrinsics[:, :1]))
+        query_xyz, extrinsics, intrinsics, coordinate_scale = self._build_pred_pc_fps_queries(
+            vggt_token_list, ps_idx, images, batch_inputs_dict,
+            batch_data_samples)
         feature_maps = self._build_patch_feature_maps(
             vggt_token_list, ps_idx, images.shape[-2:])
         query = self.geometry_queries.unsqueeze(0).expand(
             query_xyz.shape[0], -1, -1).to(dtype=feature_maps[0].dtype)
         batch_inputs_dict['query_xyz'] = query_xyz
         return self.geometry_decoder(
-            query, feature_maps, query_xyz, projection_extrinsics,
-            projection_intrinsics, coordinate_scale, images.shape[-2:],
-            self.pos_embedding, self.query_projection, self.bbox_head.center_heads)
+            query, feature_maps, query_xyz, extrinsics, intrinsics,
+            coordinate_scale,
+            images.shape[-2:], self.pos_embedding, self.query_projection,
+            self.bbox_head.center_heads)
 
 
     def loss(self, batch_inputs_dict: dict, batch_data_samples: SampleList,
