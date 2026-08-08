@@ -6,9 +6,6 @@ from typing import Optional
 import torch
 from torch import nn
 
-from sam3.device_utils import get_default_device, is_accelerator_available
-
-
 class PositionEmbeddingSine(nn.Module):
     """
     This is a more standard version of the position embedding, very similar to the one
@@ -46,7 +43,7 @@ class PositionEmbeddingSine(nn.Module):
                 (precompute_resolution // 32, precompute_resolution // 32),
             ]
             for size in precompute_sizes:
-                tensors = torch.zeros((1, 1) + size, device=str(get_default_device()) if is_accelerator_available() else "cpu")
+                tensors = torch.zeros((1, 1) + size)
                 self.forward(tensors)
                 # further clone and detach it in the cache (just to be safe)
                 self.cache[size] = self.cache[size].clone().detach()
