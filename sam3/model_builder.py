@@ -10,7 +10,6 @@ import torch
 import torch.nn as nn
 from huggingface_hub import hf_hub_download
 from iopath.common.file_io import g_pathmgr
-from mmengine.logging import print_log
 from sam3.model.decoder import (
     DecoupledTransformerDecoderLayerv2,
     SimpleRoPEAttention,
@@ -49,7 +48,6 @@ from sam3.model.video_tracking_multiplex import VideoTrackingDynamicMultiplex
 from sam3.model.vitdet import ViT
 from sam3.model.vl_combiner import SAM3VLBackbone, SAM3VLBackboneTri, TriHeadVisionOnly
 from sam3.sam.transformer import RoPEAttention
-from sam3.vision_builder import build_sam3_vision_encoder
 
 
 # Setup TensorFloat-32 for Ampere GPUs if available
@@ -561,6 +559,60 @@ def _load_checkpoint(model, checkpoint_path):
             f"loaded {checkpoint_path} and found "
             f"missing and/or unexpected keys:\n{missing_keys=}"
         )
+
+
+def build_sam3_vision_encoder(
+    checkpoint_path,
+    device="cuda" if torch.cuda.is_available() else "cpu",
+    eval_mode=True,
+    compile=False,
+):
+    """Build only the SAM3 image trunk and FPN neck."""
+    if checkpoint_path is None:
+        raise ValueError(
+            "checkpoint_path is required for the SAM3 vision encoder")
+    if not g_pathmgr.exists(checkpoint_path):
+        raise FileNotFoundError(
+            f"SAM3 checkpoint does not exist: {checkpoint_path}")
+
+    compile_mode = "default" if compile else None
+    encoder = _create_vision_backbone(compile_mode=compile_mode)
+
+    with g_pathmgr.open(checkpoint_path, "rb") as f:
+        checkpoint = torch.load(f, map_location="cpu", weights_only=True)
+    if "model" in checkpoint and isinstance(checkpoint["model"], dict):
+        checkpoint = checkpoint["model"]
+
+    encoder_keys = set(encoder.state_dict())
+    encoder_checkpoint = {}
+    prefixes = (
+        "detector.backbone.vision_backbone.",
+        "backbone.vision_backbone.",
+        "vision_backbone.",
+    )
+    for key, value in checkpoint.items():
+        if key in encoder_keys:
+            encoder_checkpoint[key] = value
+            continue
+        for prefix in prefixes:
+            if prefix in key:
+                encoder_checkpoint[key.split(prefix, 1)[1]] = value
+                break
+
+    if not encoder_checkpoint:
+        raise RuntimeError(
+            "The checkpoint does not contain SAM3 vision encoder weights")
+    missing_keys, unexpected_keys = encoder.load_state_dict(
+        encoder_checkpoint, strict=False)
+    if missing_keys or unexpected_keys:
+        raise RuntimeError(
+            "SAM3 vision checkpoint does not match the encoder: "
+            f"missing_keys={missing_keys}, unexpected_keys={unexpected_keys}")
+
+    encoder = encoder.to(device)
+    if eval_mode:
+        encoder.eval()
+    return encoder
 
 
 def _setup_device_and_mode(model, device, eval_mode):

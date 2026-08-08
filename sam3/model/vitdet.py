@@ -115,27 +115,6 @@ def compute_axial_cis(
     return torch.cat([freqs_cis_x, freqs_cis_y], dim=-1)
 
 
-def compute_axial_cis_real(
-    dim: int,
-    end_x: int,
-    end_y: int,
-    theta: float = 10000.0,
-    scale_pos: Union[float, Tuple[float, float]] = 1.0,
-    offset: int = 0,
-    device=None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    dim_indices = torch.arange(0, dim, 4, device=device)[: (dim // 4)]
-    freqs_x = 1.0 / (theta ** (dim_indices.float() / dim))
-    freqs_y = 1.0 / (theta ** (dim_indices.float() / dim))
-    t_x, t_y = init_t_xy(
-        end_x, end_y, scale_pos, offset, device=device)
-    angles = torch.cat([
-        torch.outer(t_x, freqs_x),
-        torch.outer(t_y, freqs_y),
-    ], dim=-1)
-    return angles.cos(), angles.sin()
-
-
 def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     ndim = x.ndim
     assert 0 <= 1 < ndim
@@ -537,12 +516,6 @@ class Attention(nn.Module):
             dim=self.head_dim,
             theta=self.rope_theta,
         )
-        self.compute_cis_real = partial(
-            compute_axial_cis_real,
-            dim=self.head_dim,
-            theta=self.rope_theta,
-        )
-        self._rope_freqs_cache = {}
 
         if self.rope_pt_size != self.input_size and self.rope_tiled:
             assert not self.rope_interp
@@ -590,28 +563,17 @@ class Attention(nn.Module):
             cls_freqs_cis = torch.polar(torch.ones_like(t), t)[None, :]
             freqs_cis = torch.cat([cls_freqs_cis, freqs_cis], dim=0)
 
+        self.register_buffer("freqs_cis", freqs_cis)
         if self.use_rope_real:
-            self.freqs_cis = None
-            self.register_buffer(
-                "freqs_cis_real", freqs_cis.real, persistent=False)
-            self.register_buffer(
-                "freqs_cis_imag", freqs_cis.imag, persistent=False)
-        else:
-            self.register_buffer("freqs_cis", freqs_cis)
+            self.register_buffer("freqs_cis_real", freqs_cis.real)
+            self.register_buffer("freqs_cis_imag", freqs_cis.imag)
 
     def _rope_freqs_for_shape(self, height, width, device):
         expected_tokens = height * width + int(self.cls_token)
-        cached_freqs = (
-            self.freqs_cis_real if self.use_rope_real else self.freqs_cis)
-        if cached_freqs.shape[0] == expected_tokens:
-            if self.use_rope_real:
-                return self.freqs_cis_real, self.freqs_cis_imag
+        if self.freqs_cis.shape[0] == expected_tokens:
             return self.freqs_cis
         if self.rope_tiled:
             raise ValueError('Dynamic input sizes do not support tiled RoPE')
-        cache_key = (height, width, torch.device(device))
-        if self.use_rope_real and cache_key in self._rope_freqs_cache:
-            return self._rope_freqs_cache[cache_key]
 
         scale_pos = 1.0
         if self.rope_interp:
@@ -619,40 +581,19 @@ class Attention(nn.Module):
                 self.rope_pt_size[1] / width,
                 self.rope_pt_size[0] / height,
             )
-        if self.use_rope_real:
-            freqs_cis_real, freqs_cis_imag = self.compute_cis_real(
-                end_x=width,
-                end_y=height,
-                scale_pos=scale_pos,
-                device=device,
-            )
-        else:
-            freqs_cis = self.compute_cis(
-                end_x=width,
-                end_y=height,
-                scale_pos=scale_pos,
-                device=device,
-            )
+        freqs_cis = self.compute_cis(
+            end_x=width,
+            end_y=height,
+            scale_pos=scale_pos,
+            device=device,
+        )
         if self.cls_token:
-            if self.use_rope_real:
-                cls_freqs_real = torch.ones(
-                    1, self.head_dim // 2, dtype=torch.float32, device=device)
-                cls_freqs_imag = torch.zeros_like(cls_freqs_real)
-                freqs_cis_real = torch.cat([
-                    cls_freqs_real, freqs_cis_real], dim=0)
-                freqs_cis_imag = torch.cat([
-                    cls_freqs_imag, freqs_cis_imag], dim=0)
-            else:
-                cls_freqs = torch.zeros(
-                    1, self.head_dim // 2, dtype=torch.float32, device=device)
-                freqs_cis = torch.cat([
-                    torch.polar(torch.ones_like(cls_freqs), cls_freqs),
-                    freqs_cis,
-                ], dim=0)
-        if self.use_rope_real:
-            freqs = (freqs_cis_real, freqs_cis_imag)
-            self._rope_freqs_cache[cache_key] = freqs
-            return freqs
+            cls_freqs = torch.zeros(
+                1, self.head_dim // 2, dtype=torch.float32, device=device)
+            freqs_cis = torch.cat([
+                torch.polar(torch.ones_like(cls_freqs), cls_freqs),
+                freqs_cis,
+            ], dim=0)
         return freqs_cis
 
     def _apply_rope(self, q, k, spatial_shape) -> Tuple[Tensor, Tensor]:
@@ -663,18 +604,17 @@ class Attention(nn.Module):
             dtype = q.dtype
             return self.rope(q).to(dtype), self.rope(k).to(dtype)
 
+        assert self.freqs_cis is not None
         freqs_cis = self._rope_freqs_for_shape(
             spatial_shape[0], spatial_shape[1], q.device)
 
         if self.use_rope_real:
-            freqs_cis_real, freqs_cis_imag = freqs_cis
             return apply_rotary_enc_real(
                 q,
                 k,
-                freqs_cis_imag=freqs_cis_imag,
-                freqs_cis_real=freqs_cis_real,
+                freqs_cis_imag=freqs_cis.imag,
+                freqs_cis_real=freqs_cis.real,
             )
-        assert self.freqs_cis is not None
         return apply_rotary_enc(q, k, freqs_cis=freqs_cis)
 
     def forward(self, x: Tensor) -> Tensor:
