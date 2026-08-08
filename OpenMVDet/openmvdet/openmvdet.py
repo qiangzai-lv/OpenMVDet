@@ -142,7 +142,10 @@ class OpenMVDet(Base3DDetector):
             from sam3.vision_builder import build_sam3_vision_encoder
 
             sam3_encoder = build_sam3_vision_encoder(
-                checkpoint_path=sam3_checkpoint, device='cpu', eval_mode=True)
+                checkpoint_path=sam3_checkpoint,
+                device='cpu',
+                eval_mode=True,
+                use_rope_real=device.type == 'npu')
             self.sam3_image_trunk = sam3_encoder.trunk
             self.sam3_feature_necks = nn.ModuleList([
                 sam3_encoder.convs[1],  # 1/7 resolution

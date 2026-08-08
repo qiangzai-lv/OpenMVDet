@@ -10,7 +10,7 @@ from sam3.model.position_encoding import PositionEmbeddingSine
 from sam3.model.vitdet import ViT
 
 
-def _create_vision_backbone(compile_mode=None):
+def _create_vision_backbone(compile_mode=None, use_rope_real=False):
     position_encoding = PositionEmbeddingSine(
         num_pos_feats=256,
         normalize=True,
@@ -44,7 +44,7 @@ def _create_vision_backbone(compile_mode=None):
         bias_patch_embed=False,
         compile_mode=compile_mode,
         use_fa3=False,
-        use_rope_real=False,
+        use_rope_real=use_rope_real,
     )
     return Sam3DualViTDetNeck(
         position_encoding=position_encoding,
@@ -60,6 +60,7 @@ def build_sam3_vision_encoder(
     device=None,
     eval_mode=True,
     compile=False,
+    use_rope_real=None,
 ):
     """Build only the SAM3 image trunk and FPN neck."""
     if checkpoint_path is None:
@@ -69,12 +70,17 @@ def build_sam3_vision_encoder(
             f"SAM3 checkpoint does not exist: {checkpoint_path}")
 
     device = get_default_device() if device is None else torch.device(device)
+    if use_rope_real is None:
+        use_rope_real = device.type == "npu"
     print_log(
         f"[SAM3] Loading vision encoder checkpoint: {checkpoint_path}",
         logger="current",
     )
     compile_mode = "default" if compile else None
-    encoder = _create_vision_backbone(compile_mode=compile_mode)
+    encoder = _create_vision_backbone(
+        compile_mode=compile_mode,
+        use_rope_real=use_rope_real,
+    )
 
     with g_pathmgr.open(checkpoint_path, "rb") as f:
         checkpoint = torch.load(f, map_location="cpu", weights_only=True)
@@ -124,7 +130,8 @@ def build_sam3_vision_encoder(
         encoder.eval()
     print_log(
         f"[SAM3] Vision encoder ready: device={device}, "
-        f"eval_mode={eval_mode}, compile={compile}",
+        f"eval_mode={eval_mode}, compile={compile}, "
+        f"rope={'real' if use_rope_real else 'complex'}",
         logger="current",
     )
     return encoder
