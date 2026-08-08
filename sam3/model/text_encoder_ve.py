@@ -1,7 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 
-# pyre-unsafe
-
 from collections import OrderedDict
 from typing import Callable, List, Optional, Tuple, Union
 
@@ -10,6 +8,8 @@ import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
 
 from .model_misc import LayerScale
+
+from sam3.device_utils import safe_compile
 
 
 class ResidualAttentionBlock(nn.Module):
@@ -77,11 +77,9 @@ class ResidualAttentionBlock(nn.Module):
         attn_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         k_x = (
-            # pyrefly: ignore [not-callable]
             self.ln_1_kv(k_x) if hasattr(self, "ln_1_kv") and k_x is not None else None
         )
         v_x = (
-            # pyrefly: ignore [not-callable]
             self.ln_1_kv(v_x) if hasattr(self, "ln_1_kv") and v_x is not None else None
         )
         x = q_x + self.ls_1(
@@ -123,7 +121,7 @@ class Transformer(nn.Module):
         )
 
         if compile_mode is not None:
-            self.forward = torch.compile(
+            self.forward = safe_compile(
                 self.forward, mode=compile_mode, fullgraph=True
             )
             if self.grad_checkpointing:
@@ -140,7 +138,6 @@ class Transformer(nn.Module):
                 and not torch.jit.is_scripting()
                 and self.training
             ):
-                # pyrefly: ignore [bad-assignment]
                 x = checkpoint(r, x, None, None, attn_mask, use_reentrant=False)
             else:
                 x = r(
@@ -220,7 +217,6 @@ class TextTransformer(nn.Module):
         if proj_bias:
             self.text_projection = nn.Linear(width, output_dim)
         else:
-            # pyrefly: ignore [bad-assignment]
             self.text_projection = nn.Parameter(torch.empty(width, output_dim))
 
     def build_causal_mask(self) -> torch.Tensor:
@@ -293,7 +289,6 @@ class VETextEncoder(nn.Module):
         self,
         text: Union[List[str], Tuple[torch.Tensor, torch.Tensor, dict]],
         input_boxes: Optional[List] = None,
-        # pyrefly: ignore [bad-function-definition]
         device: torch.device = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if isinstance(text[0], str):
@@ -322,14 +317,12 @@ class VETextEncoder(nn.Module):
         else:
             # The text is already encoded, use as is.
             text_attention_mask, text_memory_resized, tokenized = text
-            # pyrefly: ignore [bad-index]
             inputs_embeds = tokenized["inputs_embeds"]
-            assert input_boxes is None or len(input_boxes) == 0, (
-                "Can't replace boxes in text if it's already encoded"
-            )
+            assert (
+                input_boxes is None or len(input_boxes) == 0
+            ), "Can't replace boxes in text if it's already encoded"
 
         # Note that the input_embeds are returned in pytorch's convention (sequence first)
-        # pyrefly: ignore [bad-return]
         return (
             text_attention_mask,
             text_memory_resized,

@@ -1,7 +1,5 @@
 # flake8: noqa
 
-# pyre-unsafe
-
 import itertools
 import json
 import os

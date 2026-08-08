@@ -1,12 +1,17 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 
-# pyre-unsafe
-
 """Triton kernel for euclidean distance transform (EDT)"""
 
 import torch
-import triton
-import triton.language as tl
+
+try:
+    import triton
+    import triton.language as tl
+    HAS_TRITON = True
+except ImportError:
+    HAS_TRITON = False
+    triton = None
+    tl = None
 
 """
 Disclaimer: This implementation is not meant to be extremely efficient. A CUDA kernel would likely be more efficient.
@@ -52,12 +57,11 @@ Overall, despite being quite naive, this implementation is roughly 5.5x faster t
 """
 
 
+edt_kernel = None
+if HAS_TRITON:
+    exec("""
 @triton.jit
 def edt_kernel(inputs_ptr, outputs_ptr, v, z, height, width, horizontal: tl.constexpr):
-    # This is a somewhat verbatim implementation of the efficient 1D EDT algorithm described above
-    # It can be applied horizontally or vertically depending if we're doing the first or second stage.
-    # It's parallelized across batch+row (or batch+col if horizontal=False)
-    # TODO: perhaps the implementation can be revisited if/when local gather/scatter become available in triton
     batch_id = tl.program_id(axis=0)
     if horizontal:
         row_id = tl.program_id(axis=1)
@@ -70,21 +74,14 @@ def edt_kernel(inputs_ptr, outputs_ptr, v, z, height, width, horizontal: tl.cons
         length = height
         stride = width
 
-    # This will be the index of the right most parabola in the envelope ("the top of the stack")
     k = 0
     for q in range(1, length):
-        # Read the function value at the current location. Note that we're doing a singular read, not very efficient
         cur_input = tl.load(inputs_ptr + block_start + (q * stride))
-        # location of the parabola on top of the stack
         r = tl.load(v + block_start + (k * stride))
-        # associated boundary
         z_k = tl.load(z + block_start + (k * stride))
-        # value of the function at the parabola location
         previous_input = tl.load(inputs_ptr + block_start + (r * stride))
-        # intersection between the two parabolas
         s = (cur_input - previous_input + q * q - r * r) / (q - r) / 2
 
-        # we'll pop as many parabolas as required
         while s <= z_k and k - 1 >= 0:
             k = k - 1
             r = tl.load(v + block_start + (k * stride))
@@ -92,14 +89,12 @@ def edt_kernel(inputs_ptr, outputs_ptr, v, z, height, width, horizontal: tl.cons
             previous_input = tl.load(inputs_ptr + block_start + (r * stride))
             s = (cur_input - previous_input + q * q - r * r) / (q - r) / 2
 
-        # Store the new one
         k = k + 1
         tl.store(v + block_start + (k * stride), q)
         tl.store(z + block_start + (k * stride), s)
         if k + 1 < length:
             tl.store(z + block_start + ((k + 1) * stride), 1e9)
 
-    # Last step, we read the envelope to find the min in every location
     k = 0
     for q in range(length):
         while (
@@ -114,6 +109,31 @@ def edt_kernel(inputs_ptr, outputs_ptr, v, z, height, width, horizontal: tl.cons
         d = q - r
         old_value = tl.load(inputs_ptr + block_start + (r * stride))
         tl.store(outputs_ptr + block_start + (q * stride), old_value + d * d)
+""", {"triton": triton, "tl": tl}, globals())
+
+
+def _edt_pytorch_fallback(data: torch.Tensor):
+    """Pure PyTorch fallback for EDT when Triton is unavailable."""
+    assert data.dim() == 3
+    B, H, W = data.shape
+    data = data.contiguous()
+
+    output = torch.where(data.bool(), torch.tensor(float('inf'), device=data.device), torch.tensor(0.0, device=data.device))
+
+    zero_positions = (~data.bool()).nonzero(as_tuple=False)
+
+    for b in range(B):
+        b_mask = zero_positions[:, 0] == b
+        b_zeros = zero_positions[b_mask][:, 1:]
+        if b_zeros.numel() == 0:
+            continue
+        for i in range(H):
+            for j in range(W):
+                if data[b, i, j]:
+                    dists = ((b_zeros[:, 0].float() - i) ** 2 + (b_zeros[:, 1].float() - j) ** 2)
+                    output[b, i, j] = dists.min().sqrt()
+
+    return output
 
 
 def edt_triton(data: torch.Tensor):
@@ -128,7 +148,11 @@ def edt_triton(data: torch.Tensor):
         It should be equivalent to a batched version of cv2.distanceTransform(input, cv2.DIST_L2, 0)
     """
     assert data.dim() == 3
-    assert data.is_cuda
+    assert data.device.type in ("cuda", "npu", "mlu"), \
+        f"edt_triton requires an accelerator device, got {data.device.type}"
+
+    if not HAS_TRITON or not data.is_cuda:
+        return _edt_pytorch_fallback(data)
     B, H, W = data.shape
     data = data.contiguous()
 
@@ -153,7 +177,6 @@ def edt_triton(data: torch.Tensor):
         parabola_inter,
         H,
         W,
-        # pyrefly: ignore [bad-argument-type]
         horizontal=True,
     )
 
@@ -170,7 +193,6 @@ def edt_triton(data: torch.Tensor):
         parabola_inter,
         H,
         W,
-        # pyrefly: ignore [bad-argument-type]
         horizontal=False,
     )
     # don't forget to take sqrt at the end

@@ -1,8 +1,6 @@
 # fmt: off
 # flake8: noqa
 
-# pyre-unsafe
-
 """Track Every Thing Accuracy metric."""
 
 import numpy as np

@@ -1,7 +1,5 @@
 # flake8: noqa
 
-# pyre-unsafe
-
 """run_youtube_vis.py
 Run example:
 run_youtube_vis.py --USE_PARALLEL False --METRICS HOTA --TRACKERS_TO_EVAL STEm_Seg

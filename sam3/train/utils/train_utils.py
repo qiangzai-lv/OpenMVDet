@@ -1,7 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 
-# pyre-unsafe
-
 import logging
 import math
 import os
@@ -11,12 +9,15 @@ from datetime import timedelta
 from typing import Optional
 
 import hydra
+
 import numpy as np
 import omegaconf
 import torch
 import torch.distributed as dist
 from iopath.common.file_io import g_pathmgr
 from omegaconf import OmegaConf
+
+from sam3.device_utils import manual_seed_all as _manual_seed_all, max_memory_allocated as _max_memory_allocated, reset_peak_memory_stats as _reset_peak_memory_stats, is_accelerator_available
 
 
 def multiply_all(*args):
@@ -82,9 +83,9 @@ def get_machine_local_and_dist_rank():
     """
     local_rank = int(os.environ.get("LOCAL_RANK", None))
     distributed_rank = int(os.environ.get("RANK", None))
-    assert local_rank is not None and distributed_rank is not None, (
-        "Please the set the RANK and LOCAL_RANK environment variables."
-    )
+    assert (
+        local_rank is not None and distributed_rank is not None
+    ), "Please the set the RANK and LOCAL_RANK environment variables."
     return local_rank, distributed_rank
 
 
@@ -107,8 +108,8 @@ def set_seeds(seed_value, max_epochs, dist_rank):
     random.seed(seed_value)
     np.random.seed(seed_value)
     torch.manual_seed(seed_value)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed_value)
+    if is_accelerator_available():
+        _manual_seed_all(seed_value)
 
 
 def makedir(dir_path):
@@ -198,13 +199,13 @@ class MemMeter:
         self._allow_updates = True
 
     def update(self, n=1, reset_peak_usage=True):
-        self.val = torch.cuda.max_memory_allocated() // 1e9
+        self.val = _max_memory_allocated() // 1e9
         self.sum += self.val * n
         self.count += n
         self.avg = self.sum / self.count
         self.peak = max(self.peak, self.val)
         if reset_peak_usage:
-            torch.cuda.reset_peak_memory_stats()
+            _reset_peak_memory_stats()
 
     def __str__(self):
         fmtstr = (

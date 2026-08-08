@@ -1,9 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 
-# pyre-unsafe
-
 import torch
+
 from sam3.model.model_misc import SAM3Output
+from sam3.device_utils import get_default_device
+
 from sam3.train.utils.distributed import get_world_size
 
 from .loss_fns import CORE_LOSS_KEY, Det2TrkAssoc, Masks
@@ -15,12 +16,12 @@ class DummyLoss(torch.nn.Module):
     def __init__(
         self,
         core_loss_key: str = CORE_LOSS_KEY,
-        device: str = "cuda",
+        device: str = None,
         **kwargs,
     ):
         super().__init__()
         self.core_loss_key = core_loss_key
-        self.device = torch.device(device)
+        self.device = torch.device(device) if device is not None else get_default_device()
 
     def forward(self, *args, **kwargs):
         return {self.core_loss_key: torch.tensor(0.0, device=self.device)}

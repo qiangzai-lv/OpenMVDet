@@ -1,8 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 # All rights reserved.
 
-# pyre-unsafe
-
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
@@ -13,6 +11,8 @@ import numpy as np
 import torch
 from PIL import Image
 from tqdm import tqdm
+
+from sam3.device_utils import get_default_device
 
 
 def _load_img_as_tensor(img_path, image_size):
@@ -102,7 +102,7 @@ def load_video_frames(
     img_mean=(0.5, 0.5, 0.5),
     img_std=(0.5, 0.5, 0.5),
     async_loading_frames=False,
-    compute_device=torch.device("cuda"),
+    compute_device=get_default_device(),
 ):
     """
     Load the video frames from video_path. The frames are resized to image_size as in
@@ -143,7 +143,7 @@ def load_video_frames_from_jpg_images(
     img_mean=(0.5, 0.5, 0.5),
     img_std=(0.5, 0.5, 0.5),
     async_loading_frames=False,
-    compute_device=torch.device("cuda"),
+    compute_device=get_default_device(),
 ):
     """
     Load the video frames from a directory of JPEG files ("<frame_index>.jpg" format).
@@ -209,7 +209,7 @@ def load_video_frames_from_video_file(
     offload_video_to_cpu,
     img_mean=(0.5, 0.5, 0.5),
     img_std=(0.5, 0.5, 0.5),
-    compute_device=torch.device("cuda"),
+    compute_device=get_default_device(),
 ):
     """Load the video frames from a video file."""
     import decord

@@ -1,7 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 
-# pyre-unsafe
-
 import atexit
 import functools
 import logging
@@ -10,8 +8,10 @@ import uuid
 from typing import Any, Dict, Optional, Union
 
 from hydra.utils import instantiate
+
 from iopath.common.file_io import g_pathmgr
 from numpy import ndarray
+
 from sam3.train.utils.train_utils import get_machine_local_and_dist_rank, makedir
 from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
@@ -36,7 +36,6 @@ class TensorBoardWriterWrapper:
         self,
         path: str,
         *args: Any,
-        # pyrefly: ignore [bad-function-definition]
         filename_suffix: str = None,
         summary_writer_method: Any = SummaryWriter,
         **kwargs: Any,

@@ -1,7 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 
-# pyre-unsafe
-
 """
 Adapted from:
 1. https://github.com/meta-llama/codellama/blob/main/llama/model.py
@@ -160,5 +158,4 @@ class VisionRotaryEmbeddingVE(nn.Module):
         self.register_buffer("freqs_sin", freqs_sin)
 
     def forward(self, t: torch.Tensor):
-        # pyrefly: ignore [unsupported-operation]
         return t * self.freqs_cos + rotate_half(t) * self.freqs_sin

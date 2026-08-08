@@ -1,13 +1,15 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 
-# pyre-unsafe
-
 import logging
 
 import torch
 import torch.nn.functional as F
+
+from sam3.device_utils import get_default_device, to_device
 from sam3.model.memory import SimpleMaskEncoder
+
 from sam3.model.sam3_tracker_utils import get_1d_sine_pe, select_closest_cond_frames
+
 from sam3.sam.mask_decoder import MaskDecoder, MLP
 from sam3.sam.prompt_encoder import PromptEncoder
 from sam3.sam.transformer import TwoWayTransformer
@@ -71,6 +73,7 @@ class Sam3TrackerBase(torch.nn.Module):
         use_memory_selection=False,
         # when using memory selection, the threshold to determine if the frame is good
         mf_threshold=0.01,
+        use_decoupled_selection=False,
     ):
         super().__init__()
 
@@ -148,6 +151,8 @@ class Sam3TrackerBase(torch.nn.Module):
         # Use frame filtering according to SAM2Long
         self.use_memory_selection = use_memory_selection
         self.mf_threshold = mf_threshold
+        
+        self.use_decoupled_selection = use_decoupled_selection
 
         # Compile all components of the model
         self.compile_all_components = compile_all_components
@@ -653,14 +658,14 @@ class Sam3TrackerBase(torch.nn.Module):
                     continue  # skip padding frames
                 # "maskmem_features" might have been offloaded to CPU in demo use cases,
                 # so we load it back to GPU (it's a no-op if it's already on GPU).
-                feats = prev["maskmem_features"].cuda(non_blocking=True)
+                feats = prev["maskmem_features"].to(get_default_device(), non_blocking=True)
                 seq_len = feats.shape[-2] * feats.shape[-1]
                 to_cat_prompt.append(feats.flatten(2).permute(2, 0, 1))
                 to_cat_prompt_mask.append(
                     torch.zeros(B, seq_len, device=device, dtype=bool)
                 )
                 # Spatial positional encoding (it might have been offloaded to CPU in eval)
-                maskmem_enc = prev["maskmem_pos_enc"][-1].cuda()
+                maskmem_enc = prev["maskmem_pos_enc"][-1].to(get_default_device())
                 maskmem_enc = maskmem_enc.flatten(2).permute(2, 0, 1)
 
                 if (

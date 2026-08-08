@@ -1,7 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 
-# pyre-unsafe
-
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 
@@ -22,6 +20,8 @@ import torch
 import torch.autograd as autograd
 import torch.distributed as dist
 
+from sam3.device_utils import get_device_type, get_dist_backend, to_device, is_accelerator_available, set_device
+
 
 # Default to GPU 0
 _cuda_device_index: int = 0
@@ -38,7 +38,7 @@ def _get_global_gloo_group():
     The result is cached.
     """
 
-    if dist.get_backend() == "nccl":
+    if dist.get_backend() in ("nccl", "hccl", "cncl"):
         # Increase timeout from 1800 sec to 43200 sec (12 hr) to avoid some processes
         # being much slower than others causing a timeout (which can happen in relation
         # or LVIS class mAP evaluation).
@@ -143,7 +143,7 @@ def all_gather(data, force_cpu=False, force_filesys=False, filesys_save_dir=None
     buffer = io.BytesIO()
     torch.save(data, buffer)
     data_view = buffer.getbuffer()
-    device = "cuda" if cpu_group is None else "cpu"
+    device = get_device_type() if cpu_group is None else "cpu"
     tensor = torch.ByteTensor(data_view).to(device)
 
     # obtain Tensor size of each rank
@@ -193,13 +193,13 @@ def convert_to_distributed_tensor(tensor: torch.Tensor) -> Tuple[torch.Tensor, s
     tensor is on the GPU. This helper function converts to the correct
     device and returns the tensor + original device.
     """
-    orig_device = "cpu" if not tensor.is_cuda else "gpu"
+    orig_device = "cpu" if tensor.device.type == "cpu" else "gpu"
     if (
         torch.distributed.is_available()
-        and torch.distributed.get_backend() == torch.distributed.Backend.NCCL
-        and not tensor.is_cuda
+        and torch.distributed.get_backend() in ("nccl", "hccl", "cncl")
+        and tensor.device.type == "cpu"
     ):
-        tensor = tensor.cuda()
+        tensor = to_device(tensor)
     return (tensor, orig_device)
 
 
@@ -208,7 +208,7 @@ def convert_to_normal_tensor(tensor: torch.Tensor, orig_device: str) -> torch.Te
     For some backends, such as NCCL, communication only works if the
     tensor is on the GPU. This converts the tensor back to original device.
     """
-    if tensor.is_cuda and orig_device == "cpu":
+    if tensor.device.type != "cpu" and orig_device == "cpu":
         tensor = tensor.cpu()
     return tensor
 
@@ -271,7 +271,6 @@ def all_reduce_max(tensor: torch.Tensor) -> torch.Tensor:
 def all_reduce_op(
     tensor: torch.Tensor,
     op: torch.distributed.ReduceOp,
-    # pyrefly: ignore [bad-function-definition]
     after_op_func: Callable[[torch.Tensor], torch.Tensor] = None,
 ) -> torch.Tensor:
     """
@@ -373,7 +372,7 @@ def get_primary_rank() -> int:
 def set_cuda_device_index(idx: int) -> None:
     global _cuda_device_index
     _cuda_device_index = idx
-    torch.cuda.set_device(_cuda_device_index)
+    set_device(idx)
 
 
 def set_cpu_device() -> None:
@@ -437,12 +436,10 @@ def broadcast_object(obj: Any, src: int = _PRIMARY_RANK, use_disk: bool = True) 
         # Fetch from the source
         length_tensor = torch.LongTensor([0])
         length_tensor = broadcast(length_tensor, src=src)
-        # pyrefly: ignore [no-matching-overload]
         data_tensor = torch.empty([length_tensor.item()], dtype=torch.uint8)
         data_tensor = broadcast(data_tensor, src=src)
         if use_disk:
             with tempfile.TemporaryFile("r+b") as f:
-                # pyrefly: ignore [bad-argument-type]
                 f.write(data_tensor.numpy())
                 # remove reference to the data tensor and hope that Python garbage
                 # collects it
@@ -450,7 +447,6 @@ def broadcast_object(obj: Any, src: int = _PRIMARY_RANK, use_disk: bool = True) 
                 f.seek(0)
                 obj = torch.load(f, weights_only=False)
         else:
-            # pyrefly: ignore [bad-argument-type]
             buffer = io.BytesIO(data_tensor.numpy())
             obj = torch.load(buffer, weights_only=False)
     return obj

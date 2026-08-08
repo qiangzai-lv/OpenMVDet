@@ -1,21 +1,81 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
-
-# pyre-unsafe
 import math
 
 import torch
-import triton
-import triton.language as tl
+
+try:
+    import triton
+    import triton.language as tl
+    HAS_TRITON = True
+except ImportError:
+    HAS_TRITON = False
+    triton = None
+    tl = None
 
 
-@triton.jit
-def _any_combine(a, b):
-    return a | b
+def _connected_components_pytorch_fallback(input_tensor: torch.Tensor):
+    """
+    Pure PyTorch fallback for connected components when Triton is unavailable.
+    Uses iterative label propagation (less efficient but functionally correct).
+    """
+    out_shape = input_tensor.shape
+    if input_tensor.dim() == 4 and input_tensor.shape[1] == 1:
+        input_tensor = input_tensor.squeeze(1)
+    else:
+        assert input_tensor.dim() == 3, "Input tensor must be (B, H, W) or (B, 1, H, W)."
+
+    B, H, W = input_tensor.shape
+    device = input_tensor.device
+
+    fg = (input_tensor != 0)
+    labels = torch.arange(B * H * W, device=device, dtype=torch.int32).view(B, H, W)
+    labels[~fg] = -1
+
+    for _ in range(max(H, W)):
+        old_labels = labels.clone()
+        for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]:
+            shifted = torch.roll(labels, shifts=(-dy, -dx), dims=(1, 2))
+            same_val = torch.roll(input_tensor, shifts=(-dy, -dx), dims=(1, 2)) == input_tensor
+
+            valid_h = torch.ones(H, dtype=torch.bool, device=device)
+            valid_w = torch.ones(W, dtype=torch.bool, device=device)
+            if dy == -1:
+                valid_h[0] = False
+            elif dy == 1:
+                valid_h[-1] = False
+            if dx == -1:
+                valid_w[0] = False
+            elif dx == 1:
+                valid_w[-1] = False
+            valid = valid_h[:, None] & valid_w[None, :]
+            valid = valid.unsqueeze(0).expand_as(labels)
+
+            mask = fg & valid & same_val & (shifted != -1)
+            labels = torch.where(mask, torch.min(labels, shifted), labels)
+
+        if (labels == old_labels).all():
+            break
+
+    component_sizes = torch.zeros_like(labels)
+    for b in range(B):
+        unique_labels = labels[b][fg[b]].unique()
+        for ul in unique_labels:
+            mask = labels[b] == ul
+            component_sizes[b][mask] = mask.sum().int()
+
+    labels = labels + 1
+    labels[~fg] = 0
+    return labels.view(out_shape), component_sizes.view(out_shape)
 
 
-@triton.jit
-def tl_any(a, dim=0):
-    return tl.reduce(a, dim, _any_combine)
+if HAS_TRITON:
+    @triton.jit
+    def _any_combine(a, b):
+        return a | b
+
+    @triton.jit
+    def tl_any(a, dim=0):
+        return tl.reduce(a, dim, _any_combine)
 
 
 # ==============================================================================
@@ -407,16 +467,19 @@ def connected_components_triton(input_tensor: torch.Tensor):
             - A BxHxW output tensor with dense labels. Background is 0.
             - A BxHxW tensor with the size of the connected component for each pixel.
     """
-    assert input_tensor.is_cuda and input_tensor.is_contiguous(), (
-        "Input tensor must be a contiguous CUDA tensor."
-    )
+    if not HAS_TRITON or not input_tensor.is_cuda:
+        return _connected_components_pytorch_fallback(input_tensor)
+
+    assert (
+        input_tensor.is_contiguous()
+    ), "Input tensor must be a contiguous tensor."
     out_shape = input_tensor.shape
     if input_tensor.dim() == 4 and input_tensor.shape[1] == 1:
         input_tensor = input_tensor.squeeze(1)
     else:
-        assert input_tensor.dim() == 3, (
-            "Input tensor must be (B, H, W) or (B, 1, H, W)."
-        )
+        assert (
+            input_tensor.dim() == 3
+        ), "Input tensor must be (B, H, W) or (B, 1, H, W)."
 
     B, H, W = input_tensor.shape
     numel = B * H * W
@@ -432,9 +495,7 @@ def connected_components_triton(input_tensor: torch.Tensor):
     _init_labels_kernel[grid_init](
         input_tensor,
         labels,
-        # pyrefly: ignore [bad-argument-type]
         numel,
-        # pyrefly: ignore [bad-argument-type]
         BLOCK_SIZE=BLOCK_SIZE,
     )
 
@@ -448,7 +509,6 @@ def connected_components_triton(input_tensor: torch.Tensor):
     # --- Phase 3 ---
     BLOCK_SIZE = 256
     grid_jump = lambda meta: (triton.cdiv(numel, meta["BLOCK_SIZE"]),)
-    # pyrefly: ignore [bad-argument-type]
     _pointer_jump_kernel[grid_jump](labels, output, numel, BLOCK_SIZE=BLOCK_SIZE)
 
     # --- Phase 4 ---
@@ -462,23 +522,12 @@ def connected_components_triton(input_tensor: torch.Tensor):
     # 4.1: Count the occurrences of each label
     grid_count = (triton.cdiv(numel, BLOCK_SIZE),)
     _count_labels_kernel[grid_count](
-        # pyrefly: ignore [bad-argument-type]
-        output,
-        sizes_histogram,
-        numel,
-        # pyrefly: ignore [bad-argument-type]
-        BLOCK_SIZE=BLOCK_SIZE,
+        output, sizes_histogram, numel, BLOCK_SIZE=BLOCK_SIZE
     )
 
     # 2.2: Broadcast the counts to the final output tensor
     grid_broadcast = (triton.cdiv(numel, BLOCK_SIZE),)
     _broadcast_sizes_kernel[grid_broadcast](
-        # pyrefly: ignore [bad-argument-type]
-        output,
-        sizes_histogram,
-        component_sizes_out,
-        numel,
-        # pyrefly: ignore [bad-argument-type]
-        BLOCK_SIZE=BLOCK_SIZE,
+        output, sizes_histogram, component_sizes_out, numel, BLOCK_SIZE=BLOCK_SIZE
     )
     return output.view(out_shape) + 1, component_sizes_out.view(out_shape)

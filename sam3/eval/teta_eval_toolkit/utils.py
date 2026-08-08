@@ -1,8 +1,6 @@
 # fmt: off
 # flake8: noqa
 
-# pyre-unsafe
-
 import csv
 import os
 from collections import OrderedDict

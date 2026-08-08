@@ -1,7 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 
-# pyre-unsafe
-
 from collections import defaultdict
 from dataclasses import fields, is_dataclass
 from typing import Any, Mapping, Protocol, runtime_checkable
@@ -48,9 +46,7 @@ def copy_data_to_device(data, device: torch.device, *args: Any, **kwargs: Any):
             },
         )
     elif isinstance(data, Mapping):
-        # pyrefly: ignore [bad-instantiation]
         return type(data)(
-            # pyrefly: ignore [bad-argument-count]
             {
                 k: copy_data_to_device(v, device, *args, **kwargs)
                 for k, v in data.items()

@@ -1,20 +1,24 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
-
-# pyre-unsafe
 from typing import Dict, List
 
 import numpy as np
 import PIL
 import torch
+
 from sam3.model import box_ops
+
 from sam3.model.data_misc import FindStage, interpolate
 from torchvision.transforms import v2
+
+from sam3.device_utils import get_default_device, is_accelerator_available
 
 
 class Sam3Processor:
     """ """
 
-    def __init__(self, model, resolution=1008, device="cuda", confidence_threshold=0.5):
+    def __init__(self, model, resolution=1008, device=None, confidence_threshold=0.5):
+        if device is None:
+            device = str(get_default_device()) if is_accelerator_available() else "cpu"
         self.model = model
         self.resolution = resolution
         self.device = device
@@ -81,9 +85,9 @@ class Sam3Processor:
         if not isinstance(images, list):
             raise ValueError("Images must be a list of PIL images or tensors")
         assert len(images) > 0, "Images list must not be empty"
-        assert isinstance(images[0], PIL.Image.Image), (
-            "Images must be a list of PIL images"
-        )
+        assert isinstance(
+            images[0], PIL.Image.Image
+        ), "Images must be a list of PIL images"
 
         state["original_heights"] = [image.height for image in images]
         state["original_widths"] = [image.width for image in images]
@@ -92,7 +96,6 @@ class Sam3Processor:
             self.transform(v2.functional.to_image(image).to(self.device))
             for image in images
         ]
-        # pyrefly: ignore [bad-argument-type, bad-assignment]
         images = torch.stack(images, dim=0)
         state["backbone_out"] = self.model.backbone.forward_image(images)
         inst_interactivity_en = self.model.inst_interactive_predictor is not None
@@ -150,6 +153,72 @@ class Sam3Processor:
         labels = torch.tensor([label], device=self.device, dtype=torch.bool).view(1, 1)
         state["geometric_prompt"].append_boxes(boxes, labels)
 
+        return self._forward_grounding(state)
+
+    @torch.inference_mode()
+    def add_box_and_point_prompt(self, box: List[int], points: List[List[float]], point_labels: List[int], state: Dict):
+        """
+        同时添加 Box 和 Point 提示并运行推理。
+        """
+        # 1. 基础检查
+        if "backbone_out" not in state:
+            raise ValueError("You must call set_image before prompting")
+
+        # 2. 确保 Text 上下文 (如果之前没设过 text，给个默认的 visual)
+        if "language_features" not in state["backbone_out"]:
+            dummy_text_outputs = self.model.backbone.forward_text(["visual"], device=self.device)
+            state["backbone_out"].update(dummy_text_outputs)
+
+        # 3. 初始化 Prompt 容器 (如果还没初始化)
+        if "geometric_prompt" not in state:
+            state["geometric_prompt"] = self.model._get_dummy_prompt()
+
+        # 4. 准备归一化参数
+        img_h = state["original_height"]
+        img_w = state["original_width"]
+
+        # ------------------------------------------------------------------
+        # A. 处理 Box (逻辑：Pixel [x1,y1,x2,y2] -> Normalized [cx, cy, w, h])
+        # ------------------------------------------------------------------
+        bx1, by1, bx2, by2 = box
+        # 边界保护
+        bx1 = max(0, min(bx1, img_w-1)); by1 = max(0, min(by1, img_h-1))
+        bx2 = max(bx1+1, min(bx2, img_w)); by2 = max(by1+1, min(by2, img_h))
+        
+        # 转换为中心点坐标 (SAM 标准)
+        cx = (bx1 + (bx2 - bx1) / 2) / img_w
+        cy = (by1 + (by2 - by1) / 2) / img_h
+        nw = (bx2 - bx1) / img_w
+        nh = (by2 - by1) / img_h
+        
+        # 形状: [Sequence=1, Batch=1, Channel=4]
+        # 注意：Prompt 类期望的是 sequence first, batch second
+        box_tensor = torch.tensor([cx, cy, nw, nh], device=self.device, dtype=torch.float32).view(1, 1, 4)
+        box_label = torch.tensor([True], device=self.device, dtype=torch.bool).view(1, 1)
+
+        # 调用 Prompt 类的 append_boxes
+        state["geometric_prompt"].append_boxes(box_tensor, box_label)
+
+        # ------------------------------------------------------------------
+        # B. 处理 Points (逻辑：Pixel [x,y] -> Normalized [x,y])
+        # ------------------------------------------------------------------
+        if points and len(points) > 0:
+            norm_points = []
+            for (px, py) in points:
+                # 归一化
+                norm_points.append([px / img_w, py / img_h])
+            
+            # 形状: [Sequence=N, Batch=1, Channel=2]
+            points_tensor = torch.tensor(norm_points, device=self.device, dtype=torch.float32).unsqueeze(1) 
+            
+            # 形状: [Sequence=N, Batch=1]
+            labels_tensor = torch.tensor(point_labels, device=self.device, dtype=torch.long).unsqueeze(1)
+
+            # 调用 Prompt 类的 append_points
+            # 因为 Prompt 类内部把 box 和 point 分开存，所以这里追加点不会覆盖刚才追加的框
+            state["geometric_prompt"].append_points(points_tensor, labels_tensor)
+
+        # 5. 运行推理 (此时 geometric_prompt 里既有框也有点)
         return self._forward_grounding(state)
 
     def reset_all_prompts(self, state: Dict):
